@@ -1,0 +1,215 @@
+var window = new Window("dialog", "Mover Itens Selecionados entre ListBox", undefined, {
+    resizeable: true
+});
+
+// Define o tamanho do painel
+window.size = [1440, 1106];
+
+// Cria um grupo para organizar os elementos
+var mainGroup = window.add("group");
+mainGroup.orientation = "row";
+
+// Cria a ListBox da esquerda (para listar os arquivos não utilizados)
+var leftGroup = mainGroup.add("group");
+leftGroup.orientation = "column";
+leftGroup.add("statictext", undefined, "Unused Files");
+var listboxLeft = leftGroup.add("listbox", undefined, undefined, {
+    multiselect: true
+});
+listboxLeft.preferredSize = [650, 980];
+
+// Cria o grupo de botões
+var buttonGroup = mainGroup.add("group");
+buttonGroup.orientation = "column";
+buttonGroup.alignChildren = "center";
+buttonGroup.add("button", undefined, ">>>");
+buttonGroup.add("button", undefined, "<<<");
+
+// Cria a ListBox da direita (para mostrar os arquivos que não devem ser renomeados)
+var rightGroup = mainGroup.add("group");
+rightGroup.orientation = "column";
+rightGroup.add("statictext", undefined, "Ignored Files");
+var listboxRight = rightGroup.add("listbox", undefined, undefined, {
+    multiselect: true
+});
+listboxRight.preferredSize = [650, 980];
+
+// Função para exibir a estrutura de pastas no listbox
+function displayFolderStructureInRightListbox(listbox, folderItems, indent) {
+    // Adiciona a pasta ao listbox com indentação
+    listbox.add("item", indent + folderItems.folder.name + " /");
+
+    // Exibe as subpastas, se houver
+    for (var j = 0; j < folderItems.subfolders.length; j++) {
+        displayFolderStructureInRightListbox(listbox, folderItems.subfolders[j], indent + "      "); // Aumenta o nível de indentação
+    }
+}
+// Função para mover itens selecionados para a ListBox da direita e removê-los da esquerda
+buttonGroup.children[0].onClick = function () { // Botão ">>>"
+    var selectedItems = listboxLeft.selection;
+    if (selectedItems) {
+        for (var i = selectedItems.length - 1; i >= 0; i--) {
+            var itemText = selectedItems[i].text;
+
+            // Adiciona o item na ListBox da direita se ele ainda não estiver lá
+            if (!listboxRight.find(itemText)) {
+                listboxRight.add("item", itemText);
+            }
+            // Remove o item da ListBox da esquerda
+            listboxLeft.remove(selectedItems[i]);
+        }
+    }
+};
+
+// Função para mover itens da ListBox da direita de volta para a ListBox da esquerda
+buttonGroup.children[1].onClick = function () { // Botão "<<<"
+    var selectedItems = listboxRight.selection;
+    if (selectedItems) {
+        for (var i = selectedItems.length - 1; i >= 0; i--) {
+            var itemText = selectedItems[i].text;
+
+            // Adiciona o item na ListBox da esquerda se ele ainda não estiver lá
+            if (!listboxLeft.find(itemText)) {
+                listboxLeft.add("item", itemText);
+            }
+            // Remove o item da ListBox da direita
+            listboxRight.remove(selectedItems[i]);
+        }
+    }
+};
+
+// Cria um grupo pai para os grupos de elementos
+var bottomGroup = window.add("panel");
+bottomGroup.orientation = "row";
+bottomGroup.size = [1400, 50];
+
+bottomGroup.margins = [10, 10, 10, 10]; // Remove margins para que o painel fique sempre no tamanho máximo
+
+var buttonGroup2 = bottomGroup.add("group");
+buttonGroup2.orientation = "row";
+buttonGroup2.alignment = ["left", "center"]; // Adiciona alignment para fixar no canto esquerdo
+var pathInput = buttonGroup2.add("edittext", [0, 0, 300, 24]);
+var browseButton = buttonGroup2.add("button", undefined, "Select Folder");
+var okButton2 = buttonGroup2.add("button", undefined, "Run");
+
+// Cria o grupo de rename no canto inferior direito
+var renameGroup = bottomGroup.add("group");
+renameGroup.orientation = "row";
+renameGroup.alignment = ["right", "center"]; // Adiciona alignment para fixar no canto direito
+var statictext1 = renameGroup.add("statictext", undefined, undefined, {name: "prefixStatic"}); 
+    statictext1.text = "Prefix:"; 
+var prefixInput = renameGroup.add("edittext", [0, 0, 100, 24]);
+prefixInput.text = "___DEL___"; 
+var renameButton = renameGroup.add("button", undefined, "Rename", {name: "rename"});
+
+// Função para exibir os arquivos e pastas em estrutura hierárquica
+function displayFolderStructure(listbox, folderItems, indent) {
+    // Adiciona a pasta ao listbox com indentação
+    listbox.add("item", indent + folderItems.folder.name + " /");
+
+    // Exibe os arquivos dessa pasta com um nível de indentação adicional
+    for (var i = 0; i < folderItems.files.length; i++) {
+        listbox.add("item", indent + "      | " + folderItems.files[i].name);
+    }
+
+    // Exibe as subpastas, se houver
+    for (var j = 0; j < folderItems.subfolders.length; j++) {
+        displayFolderStructure(listbox, folderItems.subfolders[j], indent + "      "); // Aumenta o nível de indentação
+    }
+}
+
+// Função para buscar arquivos não utilizados dentro de uma pasta
+function findUnusedFiles(folder) {
+    var unusedFiles = [];
+
+    // Função interna para processar pastas e arquivos
+    function processFolder(folder) {
+        var files = folder.getFiles();
+        var folderItems = {
+            folder: folder,
+            files: [],
+            subfolders: []
+        };
+        for (var i = 0; i < files.length; i++) {
+            if (files[i] instanceof Folder) {
+                var subfolderItems = processFolder(files[i]);
+                if (subfolderItems.files.length > 0 || subfolderItems.subfolders.length > 0) {
+                    folderItems.subfolders.push(subfolderItems);
+                }
+            } else if (files[i] instanceof File) {
+                if (!isFileUsedInProject(files[i])) {
+                    folderItems.files.push(files[i]);
+                }
+            }
+        }
+        return folderItems;
+    }
+
+    // Processa a pasta principal
+    var rootItems = processFolder(folder);
+    if (rootItems.files.length > 0 || rootItems.subfolders.length > 0) {
+        unusedFiles.push(rootItems);
+    }
+    return unusedFiles;
+}
+
+// Função para verificar se um arquivo está sendo usado no projeto
+function isFileUsedInProject(file) {
+    var isUsed = false;
+
+    try {
+        var proj = app.project;
+        for (var i = 1; i <= proj.items.length; i++) {
+            var item = proj.items[i];
+            if (item instanceof FootageItem) {
+                if (item.file && item.file.fsName === file.fsName) {
+                    isUsed = true;
+                    break;
+                }
+            }
+        }
+    } catch (e) {
+        alert("Erro ao verificar o arquivo: " + e.toString());
+    }
+
+    return isUsed;
+}
+
+// Função para executar a busca e listar arquivos não utilizados no listboxLeft e a estrutura de pastas no listboxRight
+okButton2.onClick = function () {
+    if (pathInput.text !== "") {
+        var folder = new Folder(pathInput.text);
+        if (folder.exists) {
+            var unusedFiles = findUnusedFiles(folder);
+
+            // Limpa a listboxLeft antes de exibir os resultados
+            listboxLeft.removeAll();
+            listboxRight.removeAll(); // Limpa o listboxRight também
+
+            // Exibe os arquivos não utilizados no listboxLeft em formato hierárquico
+            for (var i = 0; i < unusedFiles.length; i++) {
+                displayFolderStructure(listboxLeft, unusedFiles[i], "");
+                displayFolderStructureInRightListbox(listboxRight, unusedFiles[i], ""); // Adiciona a estrutura de pastas ao listboxRight
+            }
+
+            if (listboxLeft.items.length === 0) {
+                alert("Nenhum arquivo não utilizado foi encontrado.");
+            }
+        } else {
+            alert("A pasta selecionada não existe.");
+        }
+    } else {
+        alert("Selecione uma pasta.");
+    }
+};
+
+// Função para abrir o seletor de pasta
+browseButton.onClick = function () {
+    var folder = Folder.selectDialog("Selecione a pasta");
+    if (folder) {
+        pathInput.text = folder.fsName; // Mostra o caminho selecionado no input de texto
+    }
+};
+
+// Inicializa a janela
+window.show();
