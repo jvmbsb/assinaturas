@@ -1,0 +1,4168 @@
+GERANDO DOCUMENTO DE CONTEXTO... 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\PROJETO_TOTAL.txt 
+======================================== 
+GERANDO DOCUMENTO DE CONTEXTO... 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\PROJETO_TOTAL.txt 
+======================================== 
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\scripts\package-extension.js 
+======================================== 
+/**
+ * package-extension.js
+ * Packages the extension into a distributable .zxp  
+hive.
+ *
+ * Usage: node scripts/package-extension.js [--sign]
+ * Requires: archiver (npm install archiver --save-dev)
+ *
+ * For production signing, use ZXPSignCmd from Adobe:
+ *   https://github.com/Adobe-CEP/CEP-Resources/tree/master/ZXPSignCMD
+ */
+
+'use strict';
+
+const path    = require('path');
+const fs      = require('fs');
+const archiver = require('archiver');
+
+const ROOT    = path.resolve(__dirname, '..');
+const DIST    = path.join(ROOT, 'dist');
+const VERSION = require(path.join(ROOT, 'package.json')).version;
+const ZXP     = path.join(DIST, 'DeepClean-' + VERSION + '.zxp');
+
+// Files/dirs to include
+const INCLUDE = [
+  'CSXS',
+  'jsx',
+  'node',
+  'panel',
+  'package.json'
+];
+
+// Files/dirs to exclude
+const EXCLUDE = [
+  'node_modules',
+  'dist',
+  'scripts',
+  '.git',
+  '.babelrc',
+  'jsx_compiled'
+];
+
+if (!fs.existsSync(DIST)) fs.mkdirSync(DIST, { recursive: true });
+
+const output  = fs.createWriteStream(ZXP);
+const archive = archiver('zip', { zlib: { level: 9 } });
+
+output.on('close', () => {
+  const kb = (archive.pointer() / 1024).toFixed(1);
+  console.log('✓ Package created: ' + ZXP);
+  console.log('  Size: ' + kb + ' KB');
+  console.log('\nTo sign for distribution:');
+  console.log('  ZXPSignCmd -sign . dist/DeepClean-' + VERSION + '.zxp cert.p12 <password>');
+});
+
+archive.on('error', err => { throw err; });
+archive.pipe(output);
+
+INCLUDE.forEach(item => {
+  const fullPath = path.join(ROOT, item);
+  if (!fs.existsSync(fullPath)) { console.warn('  Skip (not found): ' + item); return; }
+  const stat = fs.statSync(fullPath);
+  if (stat.isDirectory()) {
+    archive.directory(fullPath, item, (data) => {
+      // Exclude node_modules inside node/
+      if (data.name.includes('node_modules')) return false;
+      return data;
+    });
+  } else {
+    archive.file(fullPath, { name: item });
+  }
+  console.log('  Added: ' + item);
+});
+
+archive.finalize();
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\scripts\transpile-jsx.js 
+======================================== 
+/**
+ * transpile-jsx.js
+ * Transpiles jsx/ scripts through Babel to ensure ES3 c 
+atibility.
+ * Run: node scripts/transpile-jsx.js
+ */
+
+'use strict';
+
+const path  = require('path');
+const fs    = require('fs');
+
+let babel;
+try {
+  babel = require('@babel/core');
+} catch (e) {
+  console.warn('Babel not found — skipping JSX transpilation. Run npm install first.');
+  process.exit(0);
+}
+
+const root    = path.resolve(__dirname, '..');
+const jsxDir  = path.join(root, 'jsx');
+const outDir  = path.join(root, 'jsx_compiled');
+
+if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+const files = fs.readdirSync(jsxDir).filter(f => f.endsWith('.jsx'));
+
+files.forEach(file => {
+  const src  = fs.readFileSync(path.join(jsxDir, file), 'utf8');
+  let result;
+  try {
+    result = babel.transformSync(src, {
+      filename: file,
+      presets: [
+        ['@babel/preset-env', {
+          targets: { ie: '9' },
+          modules: 'commonjs',
+          useBuiltIns: false
+        }]
+      ]
+    });
+  } catch (err) {
+    // Some ExtendScript constructs may fail Babel; fall back to raw source
+    console.warn('Babel failed for ' + file + ': ' + err.message + ' — using raw source');
+    result = { code: src };
+  }
+  const outPath = path.join(outDir, file);
+  fs.writeFileSync(outPath, result.code, 'utf8');
+  console.log('  Transpiled: ' + file + ' → jsx_compiled/' + file);
+});
+
+console.log('\nTranspilation complete. (' + files.length + ' files)');
+console.log('Note: jsx/ originals are also used directly — transpiled copies are optional.');
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\scripts\dev-install.js 
+======================================== 
+/**
+ * dev-install.js
+ * Creates a symlink from the AE CEP extensions directory to this project,
+ * enabling live development without re-packaging.
+ *
+ * Run: node scripts/dev-install.js
+ * Requires: AE "PlayerDebugMode" registry key / plist set to 1.
+ */
+
+'use strict';
+
+const fs     = require('fs');
+const path   = require('path');
+const os     = require('os');
+const { execSync } = require('child_process');
+
+const EXTENSION_ID   = 'com.deepclean.aep';
+const PROJECT_ROOT   = path.resolve(__dirname, '..');
+
+function getCepExtensionsDir() {
+  const platform = os.platform();
+  if (platform === 'win32') {
+    const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+    return path.join(appData, 'Adobe', 'CEP', 'extensions');
+  } else if (platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'Adobe', 'CEP', 'extensions');
+  }
+  throw new Error('Unsupported platform: ' + platform);
+}
+
+function enableDebugMode() {
+  const platform = os.platform();
+  if (platform === 'darwin') {
+    try {
+      execSync('defaults write com.adobe.CSXS.11 PlayerDebugMode 1');
+      execSync('defaults write com.adobe.CSXS.10 PlayerDebugMode 1');
+      execSync('defaults write com.adobe.CSXS.9  PlayerDebugMode 1');
+      console.log('✓ PlayerDebugMode enabled via defaults');
+    } catch (e) {
+      console.warn('Could not set PlayerDebugMode: ' + e.message);
+    }
+  } else if (platform === 'win32') {
+    console.log('⚠ On Windows, manually set registry key:');
+    console.log('  HKCU\\Software\\Adobe\\CSXS.11\\PlayerDebugMode = 1');
+  }
+}
+
+try {
+  const extDir = getCepExtensionsDir();
+  const linkPath = path.join(extDir, EXTENSION_ID);
+
+  // Create extensions dir if needed
+  if (!fs.existsSync(extDir)) {
+    fs.mkdirSync(extDir, { recursive: true });
+    console.log('Created: ' + extDir);
+  }
+
+  // Remove existing
+  if (fs.existsSync(linkPath)) {
+    const stat = fs.lstatSync(linkPath);
+    if (stat.isSymbolicLink()) {
+      fs.unlinkSync(linkPath);
+      console.log('Removed existing symlink: ' + linkPath);
+    } else {
+      console.error('ERROR: ' + linkPath + ' exists and is not a symlink. Remove manually.');
+      process.exit(1);
+    }
+  }
+
+  // Create symlink
+  fs.symlinkSync(PROJECT_ROOT, linkPath, 'dir');
+  console.log('✓ Symlink created:');
+  console.log('  ' + linkPath + ' → ' + PROJECT_ROOT);
+
+  enableDebugMode();
+
+  console.log('\n✓ Dev install complete!');
+  console.log('  1. Install node deps:  cd node && npm install');
+  console.log('  2. Restart After Effects');
+  console.log('  3. Window → Extensions → DeepClean');
+
+} catch (err) {
+  console.error('ERROR: ' + err.message);
+  if (err.code === 'EPERM' || err.code === 'EACCES') {
+    console.error('Try running with administrator / sudo privileges.');
+  }
+  process.exit(1);
+}
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\panel\index.html 
+======================================== 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DeepClean</title>
+  <link rel="stylesheet" href="css/style.css"/>
+  <!-- CEP library must be loaded before main.js -->
+  <script src="lib/CSInterface.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Header ───────────────────────────────────────────────────────────── -->
+  <div id="header">
+    <div class="header-row">
+      <div>
+        <div class="logo-mark">DeepClean</div>
+        <div class="logo-sub">Dependency Resolver</div>
+      </div>
+      <div class="version-tag">v1.0.0</div>
+    </div>
+  </div>
+
+  <!-- ── Status Bar ───────────────────────────────────────────────────────── -->
+  <div id="status-bar">
+    <div class="status-item">
+      <div id="status-dot" class="status-dot"></div>
+      <span id="status-text">Initialising…</span>
+    </div>
+    <div class="status-item" style="margin-left:auto;">
+      <span class="status-value" id="selected-comps">—</span>
+      <span>comp(s) selected</span>
+    </div>
+  </div>
+
+  <!-- ── Content ──────────────────────────────────────────────────────────── -->
+  <div id="content">
+
+    <!-- Project info card -->
+    <div class="card">
+      <div class="card-header">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="2" width="12" height="12" rx="1" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M5 8h6M5 5.5h6M5 10.5h4" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+        Project
+      </div>
+      <div class="card-body">
+        <div class="stat-grid">
+          <div class="stat-item">
+            <span class="stat-label">File</span>
+            <span class="stat-value" id="project-name" style="font-size:12px;word-break:break-all;">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Total Items</span>
+            <span class="stat-value" id="project-items">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step progress pills -->
+    <div class="card">
+      <div class="card-header">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M8 5v3l2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        Pipeline
+      </div>
+      <div class="card-body">
+        <div class="progress-steps">
+          <div class="step-pill" data-step="0">Snapshot</div>
+          <div class="step-pill" data-step="1">Analyse</div>
+          <div class="step-pill" data-step="2">Review</div>
+          <div class="step-pill" data-step="3">Execute</div>
+          <div class="step-pill" data-step="4">Done</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Idle state -->
+    <div id="idle-state">
+      <div class="idle-icon">◈</div>
+      <div>Select one or more compositions<br/>in the Project panel, then click<br/><strong style="color:var(--accent)">ANALYSE PROJECT</strong>.</div>
+    </div>
+
+    <!-- Progress panel -->
+    <div id="progress-panel" class="card">
+      <div class="card-header">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 8h10M8 3l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Progress
+      </div>
+      <div class="card-body">
+        <div class="progress-label">
+          <span id="progress-message">Waiting…</span>
+          <span id="progress-percent">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dry run panel -->
+    <div id="dry-run-panel" class="card">
+      <div class="card-header">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 2l1.5 3 3.5.5-2.5 2.5.5 3.5L8 10l-3 1.5.5-3.5L3 5.5l3.5-.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+        Analysis Summary
+      </div>
+      <div class="card-body">
+        <div class="stat-grid" style="margin-bottom:10px;">
+          <div class="stat-item">
+            <span class="stat-label">Layers Removed</span>
+            <span class="stat-value danger" id="stat-layers">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Items → Limbo</span>
+            <span class="stat-value warn" id="stat-items">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">External Comps</span>
+            <span class="stat-value" id="stat-ext-comps">0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Est. Savings</span>
+            <span class="stat-value accent" id="stat-saved-mb">0 MB</span>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+        <div style="margin-top:8px;">
+          <div class="summary-row">
+            <span class="label">Layers to remove</span>
+            <span class="value danger" id="summary-layers-remove">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">Items → _LIMBO_DeepClean</span>
+            <span class="value warn" id="summary-items-limbo">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">External comps (DC_ANCHOR)</span>
+            <span class="value" id="summary-ext-comps">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">Estimated size freed</span>
+            <span class="value accent" id="summary-saved-mb">—</span>
+          </div>
+          <div class="summary-row">
+            <span class="label">Warnings</span>
+            <span class="value warn" id="summary-warnings">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Warnings panel -->
+    <div id="warnings-panel" class="card">
+      <div class="card-header" style="color:var(--warn);">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 2L1 14h14L8 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M8 7v3M8 11.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        Warnings
+      </div>
+      <div class="card-body">
+        <div id="warnings-list"></div>
+      </div>
+    </div>
+
+    <!-- Log panel -->
+    <div id="log-panel" class="card">
+      <div class="card-header">
+        <svg class="icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M5 6h6M5 8.5h4M5 11h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+        Log
+      </div>
+      <div class="card-body" style="padding:6px 8px;">
+        <pre id="log-output"></pre>
+      </div>
+    </div>
+
+    <!-- Alert box -->
+    <div id="alert-box" class="alert" style="display:none;"></div>
+
+    <!-- Warnings count pill (footer stat) -->
+    <div class="stat-item" style="display:none;">
+      <span class="stat-label">Warnings</span>
+      <span class="stat-value warn" id="stat-warnings">0</span>
+    </div>
+
+  </div><!-- /#content -->
+
+  <!-- ── Footer / Actions ─────────────────────────────────────────────────── -->
+  <div id="footer">
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-analyze">
+        <div class="btn-spinner"></div>
+        <span class="btn-label">▶ Analyse Project</span>
+      </button>
+      <button class="btn btn-secondary" id="btn-reset" style="display:none;">
+        Reset
+      </button>
+    </div>
+    <button class="btn btn-danger" id="btn-execute" style="display:none;width:100%;">
+      <div class="btn-spinner"></div>
+      <span class="btn-label">⚡ Execute Deep Clean</span>
+    </button>
+  </div>
+
+</div><!-- /#app -->
+
+<script src="js/main.js"></script>
+</body>
+</html>
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\panel\js\main.js 
+======================================== 
+/**
+ * DeepClean Panel — Main Controller
+ * Orchestrates: Node 1 (snapshot) → Node 2 (analysis) → Dry-run review → Node 3 (execution)
+ */
+
+(function () {
+  'use strict';
+
+  // ─── CEP / Node.js context detection ───────────────────────────────────────
+  const isCEP = typeof window.cep !== 'undefined' ||
+                (typeof window.__adobe_cep__ !== 'undefined');
+  let csInterface = null;
+
+  if (isCEP) {
+    // eslint-disable-next-line no-undef
+    csInterface = new CSInterface();
+  }
+
+  // Node.js is available inside CEP panels with --enable-nodejs
+  const nodeFS = typeof require !== 'undefined' ? require('fs')         : null;
+  const nodePath= typeof require !== 'undefined' ? require('path')       : null;
+  const nodeCP  = typeof require !== 'undefined' ? require('child_process') : null;
+
+  // ─── State machine ──────────────────────────────────────────────────────────
+  const STATE = {
+    IDLE:       'IDLE',
+    SNAPSHOT:   'SNAPSHOT',
+    ANALYZING:  'ANALYZING',
+    DRY_RUN:    'DRY_RUN',
+    EXECUTING:  'EXECUTING',
+    DONE:       'DONE',
+    ERROR:      'ERROR'
+  };
+
+  let state = STATE.IDLE;
+  let manifest = null;
+  let snapshotPath = null;
+  let manifestPath = null;
+  let projectInfo  = null;
+
+  // ─── DOM references ─────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+
+  const dom = {
+    projectName:      $('project-name'),
+    projectItems:     $('project-items'),
+    selectedComps:    $('selected-comps'),
+    statusDot:        $('status-dot'),
+    statusText:       $('status-text'),
+    idleState:        $('idle-state'),
+    dryRunPanel:      $('dry-run-panel'),
+    warningsPanel:    $('warnings-panel'),
+    progressPanel:    $('progress-panel'),
+    logPanel:         $('log-panel'),
+    logOutput:        $('log-output'),
+    alertBox:         $('alert-box'),
+
+    // Stats
+    statLayers:       $('stat-layers'),
+    statItems:        $('stat-items'),
+    statExtComps:     $('stat-ext-comps'),
+    statSavedMB:      $('stat-saved-mb'),
+    statWarnings:     $('stat-warnings'),
+
+    // Summary rows
+    summaryLayersRemove: $('summary-layers-remove'),
+    summaryItemsLimbo:   $('summary-items-limbo'),
+    summaryExtComps:     $('summary-ext-comps'),
+    summarySavedMB:      $('summary-saved-mb'),
+    summaryWarnings:     $('summary-warnings'),
+
+    // Warnings list
+    warningsList:     $('warnings-list'),
+
+    // Progress
+    progressFill:     $('progress-fill'),
+    progressMessage:  $('progress-message'),
+    progressPercent:  $('progress-percent'),
+    stepPills:        document.querySelectorAll('.step-pill'),
+
+    // Buttons
+    btnAnalyze:       $('btn-analyze'),
+    btnExecute:       $('btn-execute'),
+    btnReset:         $('btn-reset'),
+  };
+
+  // ─── Logging ────────────────────────────────────────────────────────────────
+  function appendLog(msg, type) {
+    type = type || 'info';
+    const line = document.createElement('span');
+    line.className = 'log-line ' + type;
+    line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+    dom.logOutput.appendChild(line);
+    dom.logOutput.appendChild(document.createTextNode('\n'));
+    dom.logOutput.scrollTop = dom.logOutput.scrollHeight;
+  }
+
+  // ─── Alert box ──────────────────────────────────────────────────────────────
+  function showAlert(msg, type) {
+    dom.alertBox.className = 'alert ' + (type || 'info');
+    dom.alertBox.textContent = msg;
+    dom.alertBox.style.display = 'block';
+  }
+  function clearAlert() {
+    dom.alertBox.style.display = 'none';
+  }
+
+  // ─── Status bar ─────────────────────────────────────────────────────────────
+  function setStatus(text, dotClass) {
+    dom.statusText.textContent = text;
+    dom.statusDot.className = 'status-dot ' + (dotClass || '');
+  }
+
+  // ─── Progress ───────────────────────────────────────────────────────────────
+  function setProgress(pct, msg) {
+    dom.progressFill.style.width = pct + '%';
+    if (msg) dom.progressMessage.textContent = msg;
+    dom.progressPercent.textContent = pct + '%';
+  }
+
+  function activateStep(index) {
+    dom.stepPills.forEach((pill, i) => {
+      if (i < index)  pill.className = 'step-pill done';
+      else if (i === index) pill.className = 'step-pill active';
+      else pill.className = 'step-pill';
+    });
+  }
+
+  // ─── Panel show/hide ────────────────────────────────────────────────────────
+  function showPanels(panels) {
+    const all = ['idleState', 'dryRunPanel', 'warningsPanel', 'progressPanel', 'logPanel'];
+    all.forEach(p => {
+      if (dom[p]) dom[p].style.display = panels.indexOf(p) !== -1 ? 'block' : 'none';
+      if (dom[p] && panels.indexOf(p) !== -1) dom[p].classList.add('visible');
+      else if (dom[p]) dom[p].classList.remove('visible');
+    });
+  }
+
+  // ─── Button states ──────────────────────────────────────────────────────────
+  function setButtonState() {
+    dom.btnAnalyze.disabled = (state !== STATE.IDLE && state !== STATE.ERROR && state !== STATE.DONE);
+    dom.btnExecute.disabled = (state !== STATE.DRY_RUN);
+    dom.btnExecute.style.display = (state === STATE.DRY_RUN) ? 'flex' : 'none';
+    dom.btnReset.style.display   = (state !== STATE.IDLE)   ? 'flex' : 'none';
+
+    const isLoading = state === STATE.SNAPSHOT || state === STATE.ANALYZING || state === STATE.EXECUTING;
+    dom.btnAnalyze.classList.toggle('loading', isLoading);
+    dom.btnExecute.classList.toggle('loading', state === STATE.EXECUTING);
+  }
+
+  // ─── Update project info display ────────────────────────────────────────────
+  function updateProjectInfo(info) {
+    if (info) {
+      dom.projectName.textContent   = info.name || 'Untitled';
+      dom.projectItems.textContent  = info.totalItems || '—';
+      dom.selectedComps.textContent = info.selectedComps || '0';
+      const hasComps = info.selectedComps > 0;
+      dom.statusDot.className = 'status-dot ' + (hasComps ? 'ok' : 'warn');
+      dom.statusText.textContent = hasComps
+        ? info.selectedComps + ' comp(s) selected'
+        : 'No comps selected';
+    } else {
+      dom.projectName.textContent   = '—';
+      dom.projectItems.textContent  = '—';
+      dom.selectedComps.textContent = '—';
+    }
+  }
+
+  // ─── Populate dry-run summary ────────────────────────────────────────────────
+  function populateDryRun(m) {
+    const s = m.stats || {};
+    dom.statLayers.textContent   = s.layersToRemove || 0;
+    dom.statItems.textContent    = s.itemsToLimbo   || 0;
+    dom.statExtComps.textContent = (m.externalComps || []).length;
+    dom.statSavedMB.textContent  = (s.estimatedSavedMB || '0') + ' MB';
+    dom.statWarnings.textContent = s.warningCount || 0;
+
+    // Colour coding
+    dom.statLayers.className   = 'stat-value ' + (s.layersToRemove > 0 ? 'danger' : 'success');
+    dom.statItems.className    = 'stat-value ' + (s.itemsToLimbo   > 0 ? 'warn'   : 'success');
+    dom.statWarnings.className = 'stat-value ' + (s.warningCount   > 0 ? 'warn'   : 'success');
+    dom.statSavedMB.className  = 'stat-value accent';
+
+    dom.summaryLayersRemove.textContent = s.layersToRemove || 0;
+    dom.summaryItemsLimbo.textContent   = s.itemsToLimbo   || 0;
+    dom.summaryExtComps.textContent     = (m.externalComps || []).length;
+    dom.summarySavedMB.textContent      = (s.estimatedSavedMB || '0') + ' MB freed';
+    dom.summaryWarnings.textContent     = (s.warningCount || 0) + ' warnings';
+
+    // Populate warnings
+    dom.warningsList.innerHTML = '';
+    if (m.warnings && m.warnings.length > 0) {
+      m.warnings.forEach(w => {
+        const div = document.createElement('div');
+        div.className = 'warn-item';
+        div.innerHTML = '<span class="warn-icon">⚠</span><span>' + escHtml(w) + '</span>';
+        dom.warningsList.appendChild(div);
+      });
+    }
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // ─── Transition to state ─────────────────────────────────────────────────────
+  function transitionTo(newState) {
+    state = newState;
+    setButtonState();
+
+    switch (newState) {
+      case STATE.IDLE:
+        showPanels(['idleState']);
+        setStatus('Ready', '');
+        activateStep(-1);
+        break;
+      case STATE.SNAPSHOT:
+        showPanels(['progressPanel', 'logPanel']);
+        setStatus('Running snapshot…', 'pulse');
+        activateStep(0);
+        setProgress(10, 'Collecting project data…');
+        break;
+      case STATE.ANALYZING:
+        showPanels(['progressPanel', 'logPanel']);
+        setStatus('Analysing dependencies…', 'pulse');
+        activateStep(1);
+        setProgress(40, 'Parsing .aepx + resolving graph…');
+        break;
+      case STATE.DRY_RUN:
+        showPanels(['dryRunPanel', 'warningsPanel', 'logPanel']);
+        setStatus('Ready to execute', 'ok');
+        activateStep(2);
+        setProgress(75, 'Analysis complete');
+        break;
+      case STATE.EXECUTING:
+        showPanels(['progressPanel', 'logPanel']);
+        setStatus('Executing…', 'pulse');
+        activateStep(3);
+        setProgress(80, 'Applying changes…');
+        break;
+      case STATE.DONE:
+        showPanels(['logPanel']);
+        setStatus('Done ✓', 'ok');
+        activateStep(4);
+        setProgress(100, 'Complete');
+        showAlert('DeepClean complete! Use Ctrl+Z / Cmd+Z to undo.', 'success');
+        break;
+      case STATE.ERROR:
+        showPanels(['logPanel']);
+        setStatus('Error', 'error');
+        break;
+    }
+  }
+
+  // ─── evalScript wrapper (Promise) ───────────────────────────────────────────
+  function evalScript(script) {
+    return new Promise((resolve, reject) => {
+      if (!csInterface) {
+        // Dev/preview mode
+        resolve('ERROR|CEP not available (preview mode)');
+        return;
+      }
+      csInterface.evalScript(script, (result) => {
+        if (result === 'EvalScript error.') {
+          reject(new Error('evalScript failed: ' + script.substring(0, 80)));
+        } else {
+          resolve(result);
+        }
+      });
+    });
+  }
+
+  // ─── Run Node.js analysis process ────────────────────────────────────────────
+  function runAnalysis(snapshotJsonPath) {
+    return new Promise((resolve, reject) => {
+      if (!nodeCP) {
+        reject(new Error('Node.js child_process not available'));
+        return;
+      }
+
+      // Resolve path to analyze.js relative to this panel
+      const extensionRoot = csInterface
+        ? csInterface.getSystemPath(SystemPath.EXTENSION)
+        : __dirname + '/..';
+
+      const scriptPath = nodePath.join(extensionRoot, 'node', 'analyze.js');
+      appendLog('Spawning analysis: ' + scriptPath, 'info');
+
+      const child = nodeCP.spawn(process.execPath, [scriptPath, snapshotJsonPath], {
+        cwd: nodePath.join(extensionRoot, 'node')
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', d => {
+        const str = d.toString();
+        stdout += str;
+        str.split('\n').forEach(line => {
+          if (line.trim()) appendLog(line, 'info');
+        });
+      });
+
+      child.stderr.on('data', d => {
+        const str = d.toString();
+        stderr += str;
+        str.split('\n').forEach(line => {
+          if (line.trim()) appendLog(line, 'error');
+        });
+      });
+
+      child.on('close', code => {
+        if (code !== 0) {
+          reject(new Error('Analysis process failed (exit ' + code + '): ' + stderr));
+          return;
+        }
+        // Extract manifest path from last MANIFEST_READY| line
+        const lines = stdout.split('\n');
+        let mPath = null;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (lines[i].startsWith('MANIFEST_READY|')) {
+            mPath = lines[i].split('|')[1].trim();
+            break;
+          }
+        }
+        if (!mPath) {
+          reject(new Error('Analysis did not output MANIFEST_READY'));
+          return;
+        }
+        resolve(mPath);
+      });
+
+      child.on('error', err => {
+        reject(new Error('Could not spawn analysis process: ' + err.message));
+      });
+    });
+  }
+
+  // ─── Read JSON file ───────────────────────────────────────────────────────────
+  function readJsonFile(filePath) {
+    if (!nodeFS) throw new Error('fs not available');
+    const raw = nodeFS.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  }
+
+  // ─── FLOW: Analyse ────────────────────────────────────────────────────────────
+  async function flowAnalyse() {
+    clearAlert();
+    dom.logOutput.innerHTML = '';
+
+    try {
+      // ── Step 1: Snapshot ─────────────────────────────────────────────────────
+      transitionTo(STATE.SNAPSHOT);
+      appendLog('Starting snapshot collection…', 'info');
+
+      const snapResult = await evalScript('DC_runSnapshot()');
+      appendLog('Snapshot result: ' + snapResult.substring(0, 120), 'info');
+
+      if (!snapResult.startsWith('SUCCESS|')) {
+        throw new Error(snapResult.replace('ERROR|', ''));
+      }
+
+      snapshotPath = snapResult.split('|')[1].trim();
+      appendLog('Snapshot saved: ' + snapshotPath, 'ok');
+      setProgress(30, 'Snapshot collected, starting analysis…');
+
+      // ── Step 2: Analysis ─────────────────────────────────────────────────────
+      transitionTo(STATE.ANALYZING);
+      appendLog('Starting dependency analysis…', 'info');
+
+      manifestPath = await runAnalysis(snapshotPath);
+      appendLog('Manifest written: ' + manifestPath, 'ok');
+      setProgress(70, 'Analysis complete, loading manifest…');
+
+      // ── Read manifest ────────────────────────────────────────────────────────
+      manifest = readJsonFile(manifestPath);
+      appendLog('Manifest loaded — ' +
+        manifest.stats.layersToRemove + ' layers to remove, ' +
+        manifest.stats.itemsToLimbo + ' items to limbo', 'ok');
+
+      // ── Show dry-run ─────────────────────────────────────────────────────────
+      populateDryRun(manifest);
+      transitionTo(STATE.DRY_RUN);
+
+    } catch (err) {
+      appendLog('ERROR: ' + err.message, 'error');
+      showAlert('Analysis failed: ' + err.message, 'error');
+      transitionTo(STATE.ERROR);
+    }
+  }
+
+  // ─── FLOW: Execute ────────────────────────────────────────────────────────────
+  async function flowExecute() {
+    if (!manifestPath) {
+      showAlert('No manifest available. Run analysis first.', 'error');
+      return;
+    }
+    clearAlert();
+
+    try {
+      transitionTo(STATE.EXECUTING);
+      appendLog('Executing manifest: ' + manifestPath, 'info');
+
+      const execResult = await evalScript('DC_runExecution("' +
+        manifestPath.replace(/\\/g, '\\\\') + '")');
+
+      if (execResult.startsWith('SUCCESS|')) {
+        const logLines = execResult.replace('SUCCESS|', '').split('\n');
+        logLines.forEach(line => {
+          const type = line.startsWith('[WARN') ? 'warn'
+                     : line.startsWith('[DONE') ? 'ok' : 'info';
+          if (line.trim()) appendLog(line, type);
+        });
+        transitionTo(STATE.DONE);
+      } else {
+        throw new Error(execResult.replace('ERROR|', ''));
+      }
+    } catch (err) {
+      appendLog('EXECUTION ERROR: ' + err.message, 'error');
+      showAlert('Execution failed: ' + err.message, 'error');
+      transitionTo(STATE.ERROR);
+    }
+  }
+
+  // ─── FLOW: Reset ─────────────────────────────────────────────────────────────
+  function flowReset() {
+    manifest     = null;
+    snapshotPath = null;
+    manifestPath = null;
+    clearAlert();
+    dom.logOutput.innerHTML = '';
+    transitionTo(STATE.IDLE);
+    pollProjectInfo();
+  }
+
+  // ─── Poll project info ────────────────────────────────────────────────────────
+  async function pollProjectInfo() {
+    try {
+      const result = await evalScript('DC_getProjectInfo()');
+      if (result && result.startsWith('SUCCESS|')) {
+        const info = JSON.parse(result.split('|')[1]);
+        projectInfo = info;
+        updateProjectInfo(info);
+      }
+    } catch (e) {
+      // Not in AE or CEP not ready
+    }
+  }
+
+  // ─── Init ─────────────────────────────────────────────────────────────────────
+  function init() {
+    // Button bindings
+    dom.btnAnalyze.addEventListener('click', () => {
+      if (state === STATE.IDLE || state === STATE.ERROR || state === STATE.DONE) {
+        flowAnalyse();
+      }
+    });
+
+    dom.btnExecute.addEventListener('click', () => {
+      if (state === STATE.DRY_RUN) flowExecute();
+    });
+
+    dom.btnReset.addEventListener('click', flowReset);
+
+    // Initial state
+    transitionTo(STATE.IDLE);
+
+    // Poll project info every 3s
+    pollProjectInfo();
+    setInterval(pollProjectInfo, 3000);
+
+    // CEP theme sync
+    if (csInterface) {
+      const skinInfo = csInterface.getHostEnvironment().appSkinInfo;
+      if (skinInfo) {
+        // Already dark-themed; AE skin sync optional
+      }
+    }
+  }
+
+  // Wait for DOM
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+})();
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\panel\css\style.css 
+======================================== 
+/* DeepClean Panel — Industrial Utilitarian Dark Theme */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Barlow+Condensed:wght@400;600;700;900&display=swap');
+
+/* ── CSS Variables ─────────────────────────────────────────────────────────── */
+:root {
+  --bg-deep:        #0c0d0f;
+  --bg-surface:     #13151a;
+  --bg-card:        #1a1d24;
+  --bg-hover:       #21252f;
+  --border:         #272b36;
+  --border-accent:  #3a4052;
+  --accent:         #e8ff47;       /* electric yellow-green */
+  --accent-dim:     rgba(232,255,71,0.12);
+  --accent-glow:    rgba(232,255,71,0.4);
+  --danger:         #ff4757;
+  --danger-dim:     rgba(255,71,87,0.12);
+  --warn:           #ffa502;
+  --warn-dim:       rgba(255,165,2,0.12);
+  --success:        #2ed573;
+  --success-dim:    rgba(46,213,115,0.12);
+  --muted:          #4a5066;
+  --text-primary:   #dde2f0;
+  --text-secondary: #7b839e;
+  --text-dim:       #404558;
+  --font-mono:      'JetBrains Mono', 'Courier New', monospace;
+  --font-ui:        'Barlow Condensed', sans-serif;
+  --radius:         4px;
+  --transition:     140ms ease;
+}
+
+/* ── Reset ──────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar            { width: 4px; }
+::-webkit-scrollbar-track      { background: transparent; }
+::-webkit-scrollbar-thumb      { background: var(--border-accent); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover{ background: var(--muted); }
+
+/* ── Layout ─────────────────────────────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────────── */
+#header {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px 10px;
+  flex-shrink: 0;
+}
+
+.header-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.logo-mark {
+  font-family: var(--font-ui);
+  font-weight: 900;
+  font-size: 20px;
+  letter-spacing: -0.5px;
+  color: var(--accent);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.logo-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+
+.version-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 2px;
+  margin-left: auto;
+}
+
+/* ── Project status bar ─────────────────────────────────────────────────────── */
+#status-bar {
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+  min-height: 32px;
+}
+
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.status-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status-dot.ok      { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.status-dot.warn    { background: var(--warn); }
+.status-dot.error   { background: var(--danger); }
+.status-dot.pulse   {
+  background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.7); }
+}
+
+.status-value {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* ── Main content ───────────────────────────────────────────────────────────── */
+#content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.card-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.card-header .icon {
+  width: 14px; height: 14px;
+  opacity: 0.6;
+}
+
+.card-body {
+  padding: 10px 12px;
+}
+
+/* ── Stat row ───────────────────────────────────────────────────────────────── */
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.stat-item {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.stat-value.accent  { color: var(--accent); }
+.stat-value.danger  { color: var(--danger); }
+.stat-value.warn    { color: var(--warn); }
+.stat-value.success { color: var(--success); }
+
+/* ── Dry-run summary ────────────────────────────────────────────────────────── */
+#dry-run-panel {
+  display: none;
+}
+#dry-run-panel.visible {
+  display: block;
+}
+
+.summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.summary-row:last-child { border-bottom: none; }
+.summary-row .label { color: var(--text-secondary); }
+.summary-row .value { color: var(--text-primary); font-weight: 600; }
+.summary-row .value.danger  { color: var(--danger); }
+.summary-row .value.warn    { color: var(--warn); }
+.summary-row .value.accent  { color: var(--accent); }
+.summary-row .value.success { color: var(--success); }
+
+/* ── Warnings list ──────────────────────────────────────────────────────────── */
+#warnings-panel { display: none; }
+#warnings-panel.visible { display: block; }
+
+.warn-item {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--warn);
+  line-height: 1.4;
+}
+.warn-item:last-child { border-bottom: none; }
+.warn-item .warn-icon { flex-shrink: 0; margin-top: 1px; }
+
+/* ── Progress bar ───────────────────────────────────────────────────────────── */
+#progress-panel {
+  display: none;
+}
+#progress-panel.visible {
+  display: block;
+}
+
+.progress-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.progress-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 300ms ease;
+  box-shadow: 0 0 8px var(--accent-glow);
+  width: 0%;
+}
+
+.progress-steps {
+  display: flex;
+  gap: 4px;
+}
+
+.step-pill {
+  flex: 1;
+  height: 20px;
+  border-radius: 2px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+.step-pill.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.step-pill.done {
+  background: var(--success-dim);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+/* ── Log console ────────────────────────────────────────────────────────────── */
+#log-panel { display: none; }
+#log-panel.visible { display: block; }
+
+#log-output {
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  max-height: 140px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.log-line { display: block; }
+.log-line.error { color: var(--danger); }
+.log-line.warn  { color: var(--warn); }
+.log-line.ok    { color: var(--success); }
+.log-line.info  { color: var(--text-secondary); }
+
+/* ── Footer / Actions ───────────────────────────────────────────────────────── */
+#footer {
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  padding: 10px 16px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Buttons */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all var(--transition);
+  position: relative;
+  overflow: hidden;
+  outline: none;
+}
+
+.btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  transition: background var(--transition);
+}
+.btn:hover::after { background: rgba(255,255,255,0.06); }
+.btn:active::after { background: rgba(0,0,0,0.2); }
+
+.btn-primary {
+  background: var(--accent);
+  color: #0c0d0f;
+  flex: 1;
+}
+.btn-primary:hover {
+  box-shadow: 0 0 16px var(--accent-glow);
+}
+.btn-primary:disabled {
+  background: var(--muted);
+  color: var(--text-dim);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-accent);
+}
+.btn-secondary:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+.btn-secondary:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.btn-danger {
+  background: var(--danger-dim);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+.btn-danger:hover { background: var(--danger); color: #fff; }
+
+.btn-row {
+  display: flex;
+  gap: 6px;
+}
+
+/* Loading spinner inside button */
+.btn-spinner {
+  width: 12px; height: 12px;
+  border: 2px solid rgba(0,0,0,0.2);
+  border-top-color: #0c0d0f;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  display: none;
+}
+.btn.loading .btn-spinner { display: block; }
+.btn.loading .btn-label { display: none; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Empty / idle state ─────────────────────────────────────────────────────── */
+#idle-state {
+  text-align: center;
+  padding: 24px 12px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.idle-icon {
+  font-size: 28px;
+  margin-bottom: 10px;
+  opacity: 0.4;
+}
+
+/* ── Divider ────────────────────────────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ── Toast / inline alert ───────────────────────────────────────────────────── */
+.alert {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  border-left: 3px solid;
+}
+.alert.error   { background: var(--danger-dim); border-color: var(--danger);  color: var(--danger); }
+.alert.success { background: var(--success-dim); border-color: var(--success); color: var(--success); }
+.alert.warn    { background: var(--warn-dim);    border-color: var(--warn);   color: var(--warn); }
+.alert.info    { background: var(--accent-dim);  border-color: var(--accent); color: var(--accent); }
+
+/* ── Chip tags ──────────────────────────────────────────────────────────────── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.chip.accent  { background: var(--accent-dim);  color: var(--accent); }
+.chip.danger  { background: var(--danger-dim);  color: var(--danger); }
+.chip.success { background: var(--success-dim); color: var(--success); }
+
+/* ── Separator label ────────────────────────────────────────────────────────── */
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+/* ── Animations for panel mount ─────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.card { animation: fadeIn 200ms ease both; }
+.card:nth-child(2) { animation-delay: 40ms; }
+.card:nth-child(3) { animation-delay: 80ms; }
+.card:nth-child(4) { animation-delay: 120ms; }
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\panel\lib\CSInterface.js 
+======================================== 
+/**************************************************************************************************
+*
+* ADOBE SYSTEMS INCORPORATED
+* Copyright 2020 Adobe Systems Incorporated
+* All Rights Reserved.
+*
+* NOTICE:  Adobe permits you to use, modify, and distribute this file in accordance with the
+* terms of the Adobe license agreement accompanying it.  If you have received this file from a
+* source other than Adobe, then your use, modification, or distribution of it requires the prior
+* written permission of Adobe.
+*
+**************************************************************************************************/
+
+/** CSInterface - v12.0.0 */
+
+/**
+ * Stores constants for the window types supported by the CSXS infrastructure.
+ */
+function CSXSWindowType()
+{
+}
+
+/** Constant for the CSXS window type Panel. */
+CSXSWindowType._PANEL = "Panel";
+
+/** Constant for the CSXS window type Modeless. */
+CSXSWindowType._MODELESS = "Modeless";
+
+/** Constant for the CSXS window type ModalDialog. */
+CSXSWindowType._MODAL_DIALOG = "ModalDialog";
+
+/** EvalScript error message */
+EvalScript_ErrMessage = "EvalScript error.";
+
+/**
+ * @class Version
+ * Defines a version number with major, minor, micro, and special
+ * components. The major, minor and micro values are numeric; the special
+ * value can be any string.
+ *
+ * @param major   The major version component, a positive integer up to nine digits long.
+ * @param minor   The minor version component, a positive integer up to nine digits long.
+ * @param micro   The micro version component, a positive integer up to nine digits long.
+ * @param special The special version component, an arbitrary string.
+ *
+ * @return A new \c Version object.
+ */
+function Version(major, minor, micro, special)
+{
+    this.major = major;
+    this.minor = minor;
+    this.micro = micro;
+    this.special = special;
+}
+
+/**
+ * The maximum value allowed for a numeric version component.
+ * This reflects the maximum value allowed in PlugPlug and the manifest schema.
+ */
+Version.MAX_NUM = 999999999;
+
+/**
+ * @class VersionBound
+ * Defines a boundary for a version range, which associates a \c Version object
+ * with a flag for whether it is an inclusive or exclusive boundary.
+ *
+ * @param version   The \c #Version object.
+ * @param inclusive True if this boundary is inclusive, false if it is exclusive.
+ *
+ * @return A new \c VersionBound object.
+ */
+function VersionBound(version, inclusive)
+{
+    this.version = version;
+    this.inclusive = inclusive;
+}
+
+/**
+ * @class VersionRange
+ * Defines a range of versions using a lower boundary and optional upper boundary.
+ *
+ * @param lowerBound The \c #VersionBound object.
+ * @param upperBound The \c #VersionBound object, or null for a range with no upper boundary.
+ *
+ * @return A new \c VersionRange object.
+ */
+function VersionRange(lowerBound, upperBound)
+{
+    this.lowerBound = lowerBound;
+    this.upperBound = upperBound;
+}
+
+/**
+ * @class Runtime
+ * Represents a runtime related to the CEP infrastructure.
+ * Extensions can declare dependencies on particular
+ * CEP runtime versions in the extension manifest.
+ *
+ * @param name    The runtime name.
+ * @param version A \c #VersionRange object that defines a range of valid versions.
+ *
+ * @return A new \c Runtime object.
+ */
+function Runtime(name, versionRange)
+{
+    this.name = name;
+    this.versionRange = versionRange;
+}
+
+/**
+* @class Extension
+* Encapsulates a CEP-based extension to an Adobe application.
+*
+* @param id              The unique identifier of this extension.
+* @param name            The localizable display name of this extension.
+* @param mainPath        The path of the "index.html" file.
+* @param basePath        The base path of this extension.
+* @param windowType          The window type of the main window of this extension.
+                 Valid values are defined by \c #CSXSWindowType.
+* @param width           The default width in pixels of the main window of this extension.
+* @param height          The default height in pixels of the main window of this extension.
+* @param minWidth        The minimum width in pixels of the main window of this extension.
+* @param minHeight       The minimum height in pixels of the main window of this extension.
+* @param maxWidth        The maximum width in pixels of the main window of this extension.
+* @param maxHeight       The maximum height in pixels of the main window of this extension.
+* @param defaultExtensionDataXml The extension data contained in the default \c ExtensionDispatchInfo section of the extension manifest.
+* @param specialExtensionDataXml The extension data contained in the application-specific \c ExtensionDispatchInfo section of the extension manifest.
+* @param requiredRuntimeList     An array of \c Runtime objects for runtimes required by this extension.
+* @param isAutoVisible       True if this extension is visible on loading.
+* @param isPluginExtension   True if this extension has been deployed in the Plugins folder of the host application.
+*
+* @return A new \c Extension object.
+*/
+function Extension(id, name, mainPath, basePath, windowType, width, height, minWidth, minHeight, maxWidth, maxHeight,
+                   defaultExtensionDataXml, specialExtensionDataXml, requiredRuntimeList, isAutoVisible, isPluginExtension)
+{
+    this.id = id;
+    this.name = name;
+    this.mainPath = mainPath;
+    this.basePath = basePath;
+    this.windowType = windowType;
+    this.width = width;
+    this.height = height;
+    this.minWidth = minWidth;
+    this.minHeight = minHeight;
+    this.maxWidth = maxWidth;
+    this.maxHeight = maxHeight;
+    this.defaultExtensionDataXml = defaultExtensionDataXml;
+    this.specialExtensionDataXml = specialExtensionDataXml;
+    this.requiredRuntimeList = requiredRuntimeList;
+    this.isAutoVisible = isAutoVisible;
+    this.isPluginExtension = isPluginExtension;
+}
+
+/**
+ * @class CSEvent
+ * A standard JavaScript event, the base class for CEP events.
+ *
+ * @param type        The name of the event type.
+ * @param scope       The scope of event, can be "GLOBAL" or "APPLICATION".
+ * @param appId       The unique identifier of the application that generated the event.
+ * @param extensionId     The unique identifier of the extension that generated the event.
+ *
+ * @return A new \c CSEvent object
+ */
+function CSEvent(type, scope, appId, extensionId)
+{
+    this.type = type;
+    this.scope = scope;
+    this.appId = appId;
+    this.extensionId = extensionId;
+}
+
+/** Event-specific data. */
+CSEvent.prototype.data = "";
+
+/**
+ * @class SystemPath
+ * Stores operating-system-specific location constants for use in the
+ * \c #CSInterface.getSystemPath() method.
+ * @return A new \c SystemPath object.
+ */
+function SystemPath()
+{
+}
+
+/** The path to user data.  */
+SystemPath.USER_DATA = "userData";
+
+/** The path to common files for Adobe applications.  */
+SystemPath.COMMON_FILES = "commonFiles";
+
+/** The path to the user's default document folder.  */
+SystemPath.MY_DOCUMENTS = "myDocuments";
+
+/** @deprecated. Use \c #SystemPath.Extension.  */
+SystemPath.APPLICATION = "application";
+
+/** The path to current extension.  */
+SystemPath.EXTENSION = "extension";
+
+/** The path to hosting application's executable.  */
+SystemPath.HOST_APPLICATION = "hostApplication";
+
+/**
+ * @class ColorType
+ * Stores color-type constants.
+ */
+function ColorType()
+{
+}
+
+/** RGB color type. */
+ColorType.RGB = "rgb";
+
+/** Gradient color type. */
+ColorType.GRADIENT = "gradient";
+
+/** Null color type. */
+ColorType.NONE = "none";
+
+/**
+ * @class RGBColor
+ * Stores an RGB color with red, green, blue, and alpha values.
+ * All values are in the range [0.0 to 255.0]. Invalid numeric values are
+ * converted to numbers within this range.
+ *
+ * @param red   The red value, in the range [0.0 to 255.0].
+ * @param green The green value, in the range [0.0 to 255.0].
+ * @param blue  The blue value, in the range [0.0 to 255.0].
+ * @param alpha The alpha (transparency) value, in the range [0.0 to 255.0].
+ *      The default, 255.0, means that the color is fully opaque.
+ *
+ * @return A new RGBColor object.
+ */
+function RGBColor(red, green, blue, alpha)
+{
+    this.red = red;
+    this.green = green;
+    this.blue = blue;
+    this.alpha = alpha;
+}
+
+/**
+ * @class Direction
+ * A point value  in which the y component is 0 and the x component
+ * is positive or negative for a right or left direction,
+ * or the x component is 0 and the y component is positive or negative for
+ * an up or down direction.
+ *
+ * @param x     The horizontal component of the point.
+ * @param y     The vertical component of the point.
+ *
+ * @return A new \c Direction object.
+ */
+function Direction(x, y)
+{
+    this.x = x;
+    this.y = y;
+}
+
+/**
+ * @class GradientStop
+ * Stores gradient stop information.
+ *
+ * @param offset   The offset of the gradient stop, in the range [0.0 to 1.0].
+ * @param rgbColor The color of the gradient at this point, an \c #RGBColor object.
+ *
+ * @return GradientStop object.
+ */
+function GradientStop(offset, rgbColor)
+{
+    this.offset = offset;
+    this.rgbColor = rgbColor;
+}
+
+/**
+ * @class GradientColor
+ * Stores gradient color information.
+ *
+ * @param type          The gradient type, must be "linear".
+ * @param direction     A \c #Direction object for the direction of the gradient
+                (up, down, right, or left).
+ * @param numStops          The number of stops in the gradient.
+ * @param gradientStopList  An array of \c #GradientStop objects.
+ *
+ * @return A new \c GradientColor object.
+ */
+function GradientColor(type, direction, numStops, arrGradientStop)
+{
+    this.type = type;
+    this.direction = direction;
+    this.numStops = numStops;
+    this.arrGradientStop = arrGradientStop;
+}
+
+/**
+ * @class UIColor
+ * Stores color information, including the type, anti-alias level, and specific color
+ * values in a color object of an appropriate type.
+ *
+ * @param type          The color type, 1 for "rgb" and 2 for "gradient".
+                The supplied color object must correspond to this type.
+ * @param antialiasLevel    The anti-alias level constant.
+ * @param color         A \c #RGBColor or \c #GradientColor object containing specific color information.
+ *
+ * @return A new \c UIColor object.
+ */
+function UIColor(type, antialiasLevel, color)
+{
+    this.type = type;
+    this.antialiasLevel = antialiasLevel;
+    this.color = color;
+}
+
+/**
+ * @class AppSkinInfo
+ * Stores window-skin properties, such as color and font. All color parameter values are \c #UIColor objects except that systemHighlightColor is \c #RGBColor object.
+ *
+ * @param baseFontFamily        The base font family of the application.
+ * @param baseFontSize          The base font size of the application.
+ * @param appBarBackgroundColor     The application bar background color.
+ * @param panelBackgroundColor      The background color of the extension panel.
+ * @param appBarBackgroundColorSRGB     The application bar background color, as sRGB.
+ * @param panelBackgroundColorSRGB      The background color of the extension panel, as sRGB.
+ * @param systemHighlightColor          The highlight color of the extension panel, if provided by the host application. Otherwise, the operating-system highlight color.
+ *
+ * @return AppSkinInfo object.
+ */
+function AppSkinInfo(baseFontFamily, baseFontSize, appBarBackgroundColor, panelBackgroundColor, appBarBackgroundColorSRGB, panelBackgroundColorSRGB, systemHighlightColor)
+{
+    this.baseFontFamily = baseFontFamily;
+    this.baseFontSize = baseFontSize;
+    this.appBarBackgroundColor = appBarBackgroundColor;
+    this.panelBackgroundColor = panelBackgroundColor;
+    this.appBarBackgroundColorSRGB = appBarBackgroundColorSRGB;
+    this.panelBackgroundColorSRGB = panelBackgroundColorSRGB;
+    this.systemHighlightColor = systemHighlightColor;
+}
+
+/**
+ * @class HostEnvironment
+ * Stores information about the environment in which the extension is loaded.
+ *
+ * @param appName   The application's name.
+ * @param appVersion    The application's version.
+ * @param appLocale The application's current license locale.
+ * @param appUILocale   The application's current UI locale.
+ * @param appId     The application's unique identifier.
+ * @param isAppOnline  True if the application is currently online.
+ * @param appSkinInfo   An \c #AppSkinInfo object containing the application's default color and font styles.
+ *
+ * @return A new \c HostEnvironment object.
+ */
+function HostEnvironment(appName, appVersion, appLocale, appUILocale, appId, isAppOnline, appSkinInfo)
+{
+    this.appName = appName;
+    this.appVersion = appVersion;
+    this.appLocale = appLocale;
+    this.appUILocale = appUILocale;
+    this.appId = appId;
+    this.isAppOnline = isAppOnline;
+    this.appSkinInfo = appSkinInfo;
+}
+
+/**
+ * @class HostCapabilities
+ * Stores information about the host capabilities.
+ *
+ * @param EXTENDED_PANEL_MENU True if the application supports panel menu.
+ * @param EXTENDED_PANEL_ICONS True if the application supports panel icon.
+ * @param DELEGATE_APE_ENGINE True if the application supports delegated APE engine.
+ * @param SUPPORT_HTML_EXTENSIONS True if the application supports HTML extensions.
+ * @param DISABLE_FLASH_EXTENSIONS True if the application disables FLASH extensions.
+ *
+ * @return A new \c HostCapabilities object.
+ */
+function HostCapabilities(EXTENDED_PANEL_MENU, EXTENDED_PANEL_ICONS, DELEGATE_APE_ENGINE, SUPPORT_HTML_EXTENSIONS, DISABLE_FLASH_EXTENSIONS)
+{
+    this.EXTENDED_PANEL_MENU = EXTENDED_PANEL_MENU;
+    this.EXTENDED_PANEL_ICONS = EXTENDED_PANEL_ICONS;
+    this.DELEGATE_APE_ENGINE = DELEGATE_APE_ENGINE;
+    this.SUPPORT_HTML_EXTENSIONS = SUPPORT_HTML_EXTENSIONS;
+    this.DISABLE_FLASH_EXTENSIONS = DISABLE_FLASH_EXTENSIONS; // Since 5.0.0
+}
+
+/**
+ * @class ApiVersion
+ * Stores current api version.
+ *
+ * Since 4.2.0
+ *
+ * @param major  The major version
+ * @param minor  The minor version.
+ * @param micro  The micro version.
+ *
+ * @return ApiVersion object.
+ */
+function ApiVersion(major, minor, micro)
+{
+    this.major = major;
+    this.minor = minor;
+    this.micro = micro;
+}
+
+/**
+ * @class MenuItemStatus
+ * Stores flyout menu item status
+ *
+ * Since 5.2.0
+ *
+ * @param menuItemLabel  The menu item label.
+ * @param enabled        True if user wants to enable the menu item.
+ * @param checked        True if user wants to check the menu item.
+ *
+ * @return MenuItemStatus object.
+ */
+function MenuItemStatus(menuItemLabel, enabled, checked)
+{
+    this.menuItemLabel = menuItemLabel;
+    this.enabled = enabled;
+    this.checked = checked;
+}
+
+/**
+ * @class ContextMenuItemStatus
+ * Stores the status of the context menu item.
+ *
+ * Since 5.2.0
+ *
+ * @param menuItemID     The menu item id.
+ * @param enabled        True if user wants to enable the menu item.
+ * @param checked        True if user wants to check the menu item.
+ *
+ * @return MenuItemStatus object.
+ */
+function ContextMenuItemStatus(menuItemID, enabled, checked)
+{
+    this.menuItemID = menuItemID;
+    this.enabled = enabled;
+    this.checked = checked;
+}
+//------------------------------ CSInterface ----------------------------------
+
+/**
+ * @class CSInterface
+ * This is the entry point to the CEP extensibility infrastructure.
+ * Instantiate this object and use it to:
+ * <ul>
+ * <li>Access information about the host application in which an extension is running</li>
+ * <li>Launch an extension</li>
+ * <li>Register interest in event notifications, and dispatch events</li>
+ * </ul>
+ *
+ * @return A new \c CSInterface object
+ */
+function CSInterface()
+{
+}
+
+/**
+ * User can add this event listener to handle native application theme color changes.
+ * Callback function gives extensions ability to fine-tune their theme color after the
+ * global theme color has been changed.
+ * The callback function should be like below:
+ *
+ * @example
+ * // event is a CSEvent object, but user can ignore it.
+ * function OnAppThemeColorChanged(event)
+ * {
+ *    // Should get a latest HostEnvironment object from application.
+ *    var skinInfo = JSON.parse(window.__adobe_cep__.getHostEnvironment()).appSkinInfo;
+ *    // Gets the style information such as color info from the skinInfo,
+ *    // and redraw all UI controls of your extension according to the style info.
+ * }
+ */
+CSInterface.THEME_COLOR_CHANGED_EVENT = "com.adobe.csxs.events.ThemeColorChanged";
+
+/** The host environment data object. */
+CSInterface.prototype.hostEnvironment = window.__adobe_cep__ ? JSON.parse(window.__adobe_cep__.getHostEnvironment()) : null;
+
+/** Retrieves information about the host environment in which the
+ *  extension is currently running.
+ *
+ *   @return A \c #HostEnvironment object.
+ */
+CSInterface.prototype.getHostEnvironment = function()
+{
+    this.hostEnvironment = JSON.parse(window.__adobe_cep__.getHostEnvironment());
+    return this.hostEnvironment;
+};
+
+/** Loads binary file created which is located at url asynchronously
+*
+*@param urlName url at which binary file is located. Local files should start with 'file://'
+*@param callback Optional. A callback function that returns after binary is loaded
+
+*@example
+* To create JS binary use command ./cep_compiler test.js test.bin
+* To load JS binary asyncronously
+*   var CSLib = new CSInterface();
+*   CSLib.loadBinAsync(url, function () { });
+*/
+CSInterface.prototype.loadBinAsync = function(urlName,callback)
+{
+    try
+    {
+        var xhr = new XMLHttpRequest();
+        xhr.responseType = 'arraybuffer'; // make response as ArrayBuffer
+        xhr.open('GET', urlName, true);
+        xhr.onerror = function ()
+        {
+  		  console.log("Unable to load snapshot from given URL");
+  		  return false;
+		};
+        xhr.send();
+        xhr.onload = () => {
+            window.__adobe_cep__.loadSnapshot(xhr.response);
+            if (typeof callback === "function")
+            {
+                callback();
+            }
+            else if(typeof callback !== "undefined")
+            {
+                console.log("Provided callback is not a function");
+            }
+        }
+    }
+    catch(err)
+    {
+        console.log(err);
+        return false;
+    }
+
+	return true;
+};
+
+/** Loads binary file created synchronously
+*
+*@param pathName the local path at which binary file is located
+
+*@example
+* To create JS binary use command ./cep_compiler test.js test.bin
+* To load JS binary syncronously
+*   var CSLib = new CSInterface();
+*   CSLib.loadBinSync(path);
+*/
+CSInterface.prototype.loadBinSync  = function(pathName)
+{
+    try
+    {
+        var OSVersion = this.getOSInformation();
+        if(pathName.startsWith("file://"))
+        {
+            if (OSVersion.indexOf("Windows") >= 0)
+            {
+               pathName = pathName.replace("file:///", "");
+            }
+            else if (OSVersion.indexOf("Mac") >= 0)
+            {
+                pathName = pathName.replace("file://", "");
+            }
+            window.__adobe_cep__.loadSnapshot(pathName);
+            return true;
+        }
+    }
+    catch(err)
+    {
+        console.log(err);
+        return false;
+    }
+    //control should not come here
+    return false;
+};
+
+/** Closes this extension. */
+CSInterface.prototype.closeExtension = function()
+{
+    window.__adobe_cep__.closeExtension();
+};
+
+/**
+ * Retrieves a path for which a constant is defined in the system.
+ *
+ * @param pathType The path-type constant defined in \c #SystemPath ,
+ *
+ * @return The platform-specific system path string.
+ */
+CSInterface.prototype.getSystemPath = function(pathType)
+{
+    var path = decodeURI(window.__adobe_cep__.getSystemPath(pathType));
+    var OSVersion = this.getOSInformation();
+    if (OSVersion.indexOf("Windows") >= 0)
+    {
+      path = path.replace("file:///", "");
+    }
+    else if (OSVersion.indexOf("Mac") >= 0)
+    {
+      path = path.replace("file://", "");
+    }
+    return path;
+};
+
+/**
+ * Evaluates a JavaScript script, which can use the JavaScript DOM
+ * of the host application.
+ *
+ * @param script    The JavaScript script.
+ * @param callback  Optional. A callback function that receives the result of execution.
+ *          If execution fails, the callback function receives the error message \c EvalScript_ErrMessage.
+ */
+CSInterface.prototype.evalScript = function(script, callback)
+{
+    if(callback === null || callback === undefined)
+    {
+        callback = function(result){};
+    }
+    window.__adobe_cep__.evalScript(script, callback);
+};
+
+/**
+ * Retrieves the unique identifier of the application.
+ * in which the extension is currently running.
+ *
+ * @return The unique ID string.
+ */
+CSInterface.prototype.getApplicationID = function()
+{
+    var appId = this.hostEnvironment.appId;
+    return appId;
+};
+
+/**
+ * Retrieves host capability information for the application
+ * in which the extension is currently running.
+ *
+ * @return A \c #HostCapabilities object.
+ */
+CSInterface.prototype.getHostCapabilities = function()
+{
+    var hostCapabilities = JSON.parse(window.__adobe_cep__.getHostCapabilities() );
+    return hostCapabilities;
+};
+
+/**
+ * Triggers a CEP event programmatically. Yoy can use it to dispatch
+ * an event of a predefined type, or of a type you have defined.
+ *
+ * @param event A \c CSEvent object.
+ */
+CSInterface.prototype.dispatchEvent = function(event)
+{
+    if (typeof event.data == "object")
+    {
+        event.data = JSON.stringify(event.data);
+    }
+
+    window.__adobe_cep__.dispatchEvent(event);
+};
+
+/**
+ * Registers an interest in a CEP event of a particular type, and
+ * assigns an event handler.
+ * The event infrastructure notifies your extension when events of this type occur,
+ * passing the event object to the registered handler function.
+ *
+ * @param type     The name of the event type of interest.
+ * @param listener The JavaScript handler function or method.
+ * @param obj      Optional, the object containing the handler method, if any.
+ *         Default is null.
+ */
+CSInterface.prototype.addEventListener = function(type, listener, obj)
+{
+    window.__adobe_cep__.addEventListener(type, listener, obj);
+};
+
+/**
+ * Removes a registered event listener.
+ *
+ * @param type      The name of the event type of interest.
+ * @param listener  The JavaScript handler function or method that was registered.
+ * @param obj       Optional, the object containing the handler method, if any.
+ *          Default is null.
+ */
+CSInterface.prototype.removeEventListener = function(type, listener, obj)
+{
+    window.__adobe_cep__.removeEventListener(type, listener, obj);
+};
+
+/**
+ * Loads and launches another extension, or activates the extension if it is already loaded.
+ *
+ * @param extensionId       The extension's unique identifier.
+ * @param startupParams     Not currently used, pass "".
+ *
+ * @example
+ * To launch the extension "help" with ID "HLP" from this extension, call:
+ * <code>requestOpenExtension("HLP", ""); </code>
+ *
+ */
+CSInterface.prototype.requestOpenExtension = function(extensionId, params)
+{
+    window.__adobe_cep__.requestOpenExtension(extensionId, params);
+};
+
+/**
+ * Retrieves the list of extensions currently loaded in the current host application.
+ * The extension list is initialized once, and remains the same during the lifetime
+ * of the CEP session.
+ *
+ * @param extensionIds  Optional, an array of unique identifiers for extensions of interest.
+ *          If omitted, retrieves data for all extensions.
+ *
+ * @return Zero or more \c #Extension objects.
+ */
+CSInterface.prototype.getExtensions = function(extensionIds)
+{
+    var extensionIdsStr = JSON.stringify(extensionIds);
+    var extensionsStr = window.__adobe_cep__.getExtensions(extensionIdsStr);
+
+    var extensions = JSON.parse(extensionsStr);
+    return extensions;
+};
+
+/**
+ * Retrieves network-related preferences.
+ *
+ * @return A JavaScript object containing network preferences.
+ */
+CSInterface.prototype.getNetworkPreferences = function()
+{
+    var result = window.__adobe_cep__.getNetworkPreferences();
+    var networkPre = JSON.parse(result);
+
+    return networkPre;
+};
+
+/**
+ * Initializes the resource bundle for this extension with property values
+ * for the current application and locale.
+ * To support multiple locales, you must define a property file for each locale,
+ * containing keyed display-string values for that locale.
+ * See localization documentation for Extension Builder and related products.
+ *
+ * Keys can be in the
+ * form <code>key.value="localized string"</code>, for use in HTML text elements.
+ * For example, in this input element, the localized \c key.value string is displayed
+ * instead of the empty \c value string:
+ *
+ * <code><input type="submit" value="" data-locale="key"/></code>
+ *
+ * @return An object containing the resource bundle information.
+ */
+CSInterface.prototype.initResourceBundle = function()
+{
+    var resourceBundle = JSON.parse(window.__adobe_cep__.initResourceBundle());
+    var resElms = document.querySelectorAll('[data-locale]');
+    for (var n = 0; n < resElms.length; n++)
+    {
+       var resEl = resElms[n];
+       // Get the resource key from the element.
+       var resKey = resEl.getAttribute('data-locale');
+       if (resKey)
+       {
+           // Get all the resources that start with the key.
+           for (var key in resourceBundle)
+           {
+               if (key.indexOf(resKey) === 0)
+               {
+                   var resValue = resourceBundle[key];
+                   if (key.length == resKey.length)
+                   {
+                        resEl.innerHTML = resValue;
+                   }
+                   else if ('.' == key.charAt(resKey.length))
+                   {
+                        var attrKey = key.substring(resKey.length + 1);
+                        resEl[attrKey] = resValue;
+                   }
+               }
+           }
+       }
+    }
+    return resourceBundle;
+};
+
+/**
+ * Writes installation information to a file.
+ *
+ * @return The file path.
+ */
+CSInterface.prototype.dumpInstallationInfo = function()
+{
+    return window.__adobe_cep__.dumpInstallationInfo();
+};
+
+/**
+ * Retrieves version information for the current Operating System,
+ * See http://www.useragentstring.com/pages/Chrome/ for Chrome \c navigator.userAgent values.
+ *
+ * @return A string containing the OS version, or "unknown Operation System".
+ * If user customizes the User Agent by setting CEF command parameter "--user-agent", only
+ * "Mac OS X" or "Windows" will be returned.
+ */
+CSInterface.prototype.getOSInformation = function()
+{
+    var userAgent = navigator.userAgent;
+
+    if ((navigator.platform == "Win32") || (navigator.platform == "Windows"))
+    {
+        var winVersion = "Windows";
+        var winBit = "";
+        if (userAgent.indexOf("Windows") > -1)
+        {
+            if (userAgent.indexOf("Windows NT 5.0") > -1)
+            {
+                winVersion = "Windows 2000";
+            }
+            else if (userAgent.indexOf("Windows NT 5.1") > -1)
+            {
+                winVersion = "Windows XP";
+            }
+            else if (userAgent.indexOf("Windows NT 5.2") > -1)
+            {
+                winVersion = "Windows Server 2003";
+            }
+            else if (userAgent.indexOf("Windows NT 6.0") > -1)
+            {
+                winVersion = "Windows Vista";
+            }
+            else if (userAgent.indexOf("Windows NT 6.1") > -1)
+            {
+                winVersion = "Windows 7";
+            }
+            else if (userAgent.indexOf("Windows NT 6.2") > -1)
+            {
+                winVersion = "Windows 8";
+            }
+            else if (userAgent.indexOf("Windows NT 6.3") > -1)
+            {
+                winVersion = "Windows 8.1";
+            }
+            else if (userAgent.indexOf("Windows NT 10") > -1)
+            {
+                winVersion = "Windows 10";
+            }
+
+            if (userAgent.indexOf("WOW64") > -1 || userAgent.indexOf("Win64") > -1)
+            {
+                winBit = " 64-bit";
+            }
+            else
+            {
+                winBit = " 32-bit";
+            }
+        }
+
+        return winVersion + winBit;
+    }
+    else if ((navigator.platform == "MacIntel") || (navigator.platform == "Macintosh"))
+    {
+        var result = "Mac OS X";
+
+        if (userAgent.indexOf("Mac OS X") > -1)
+        {
+            result = userAgent.substring(userAgent.indexOf("Mac OS X"), userAgent.indexOf(")"));
+            result = result.replace(/_/g, ".");
+        }
+
+        return result;
+    }
+
+    return "Unknown Operation System";
+};
+
+/**
+ * Opens a page in the default system browser.
+ *
+ * Since 4.2.0
+ *
+ * @param url  The URL of the page/file to open, or the email address.
+ * Must use HTTP/HTTPS/file/mailto protocol. For example:
+ *   "http://www.adobe.com"
+ *   "https://github.com"
+ *   "file:///C:/log.txt"
+ *   "mailto:test@adobe.com"
+ *
+ * @return One of these error codes:\n
+ *      <ul>\n
+ *          <li>NO_ERROR - 0</li>\n
+ *          <li>ERR_UNKNOWN - 1</li>\n
+ *          <li>ERR_INVALID_PARAMS - 2</li>\n
+ *          <li>ERR_INVALID_URL - 201</li>\n
+ *      </ul>\n
+ */
+CSInterface.prototype.openURLInDefaultBrowser = function(url)
+{
+    return cep.util.openURLInDefaultBrowser(url);
+};
+
+/**
+ * Retrieves extension ID.
+ *
+ * Since 4.2.0
+ *
+ * @return extension ID.
+ */
+CSInterface.prototype.getExtensionID = function()
+{
+     return window.__adobe_cep__.getExtensionId();
+};
+
+/**
+ * Retrieves the scale factor of screen.
+ * On Windows platform, the value of scale factor might be different from operating system's scale factor,
+ * since host application may use its self-defined scale factor.
+ *
+ * Since 4.2.0
+ *
+ * @return One of the following float number.
+ *      <ul>\n
+ *          <li> -1.0 when error occurs </li>\n
+ *          <li> 1.0 means normal screen </li>\n
+ *          <li> >1.0 means HiDPI screen </li>\n
+ *      </ul>\n
+ */
+CSInterface.prototype.getScaleFactor = function()
+{
+    return window.__adobe_cep__.getScaleFactor();
+};
+
+/**
+ * Retrieves the scale factor of Monitor.
+ *
+ * Since 8.5.0
+ *
+ * @return value >= 1.0f
+ * only available for windows machine
+ */
+ if(navigator.appVersion.toLowerCase().indexOf("windows") >= 0) {
+    CSInterface.prototype.getMonitorScaleFactor = function()
+    {
+        return window.__adobe_cep__.getMonitorScaleFactor();
+    };
+}
+
+/**
+ * Set a handler to detect any changes of scale factor. This only works on Mac.
+ *
+ * Since 4.2.0
+ *
+ * @param handler   The function to be called when scale factor is changed.
+ *
+ */
+CSInterface.prototype.setScaleFactorChangedHandler = function(handler)
+{
+    window.__adobe_cep__.setScaleFactorChangedHandler(handler);
+};
+
+/**
+ * Retrieves current API version.
+ *
+ * Since 4.2.0
+ *
+ * @return ApiVersion object.
+ *
+ */
+CSInterface.prototype.getCurrentApiVersion = function()
+{
+    var apiVersion = JSON.parse(window.__adobe_cep__.getCurrentApiVersion());
+    return apiVersion;
+};
+
+/**
+ * Set panel flyout menu by an XML.
+ *
+ * Since 5.2.0
+ *
+ * Register a callback function for "com.adobe.csxs.events.flyoutMenuClicked" to get notified when a
+ * menu item is clicked.
+ * The "data" attribute of event is an object which contains "menuId" and "menuName" attributes.
+ *
+ * Register callback functions for "com.adobe.csxs.events.flyoutMenuOpened" and "com.adobe.csxs.events.flyoutMenuClosed"
+ * respectively to get notified when flyout menu is opened or closed.
+ *
+ * @param menu     A XML string which describes menu structure.
+ * An example menu XML:
+ * <Menu>
+ *   <MenuItem Id="menuItemId1" Label="TestExample1" Enabled="true" Checked="false"/>
+ *   <MenuItem Label="TestExample2">
+ *     <MenuItem Label="TestExample2-1" >
+ *       <MenuItem Label="TestExample2-1-1" Enabled="false" Checked="true"/>
+ *     </MenuItem>
+ *     <MenuItem Label="TestExample2-2" Enabled="true" Checked="true"/>
+ *   </MenuItem>
+ *   <MenuItem Label="---" />
+ *   <MenuItem Label="TestExample3" Enabled="false" Checked="false"/>
+ * </Menu>
+ *
+ */
+CSInterface.prototype.setPanelFlyoutMenu = function(menu)
+{
+    if ("string" != typeof menu)
+    {
+        return;
+    }
+
+    window.__adobe_cep__.invokeSync("setPanelFlyoutMenu", menu);
+};
+
+/**
+ * Updates a menu item in the extension window's flyout menu, by setting the enabled
+ * and selection status.
+ *
+ * Since 5.2.0
+ *
+ * @param menuItemLabel The menu item label.
+ * @param enabled       True to enable the item, false to disable it (gray it out).
+ * @param checked       True to select the item, false to deselect it.
+ *
+ * @return false when the host application does not support this functionality (HostCapabilities.EXTENDED_PANEL_MENU is false).
+ *         Fails silently if menu label is invalid.
+ *
+ * @see HostCapabilities.EXTENDED_PANEL_MENU
+ */
+CSInterface.prototype.updatePanelMenuItem = function(menuItemLabel, enabled, checked)
+{
+    var ret = false;
+    if (this.getHostCapabilities().EXTENDED_PANEL_MENU)
+    {
+        var itemStatus = new MenuItemStatus(menuItemLabel, enabled, checked);
+        ret = window.__adobe_cep__.invokeSync("updatePanelMenuItem", JSON.stringify(itemStatus));
+    }
+    return ret;
+};
+
+
+/**
+ * Set context menu by XML string.
+ *
+ * Since 5.2.0
+ *
+ * There are a number of conventions used to communicate what type of menu item to create and how it should be handled.
+ * - an item without menu ID or menu name is disabled and is not shown.
+ * - if the item name is "---" (three hyphens) then it is treated as a separator. The menu ID in this case will always be NULL.
+ * - Checkable attribute takes precedence over Checked attribute.
+ * - a PNG icon. For optimal display results please supply a 16 x 16px icon as larger dimensions will increase the size of the menu item.
+     The Chrome extension contextMenus API was taken as a reference.
+     https://developer.chrome.com/extensions/contextMenus
+ * - the items with icons and checkable items cannot coexist on the same menu level. The former take precedences over the latter.
+ *
+ * @param menu      A XML string which describes menu structure.
+ * @param callback  The callback function which is called when a menu item is clicked. The only parameter is the returned ID of clicked menu item.
+ *
+ * @description An example menu XML:
+ * <Menu>
+ *   <MenuItem Id="menuItemId1" Label="TestExample1" Enabled="true" Checkable="true" Checked="false" Icon="./image/small_16X16.png"/>
+ *   <MenuItem Id="menuItemId2" Label="TestExample2">
+ *     <MenuItem Id="menuItemId2-1" Label="TestExample2-1" >
+ *       <MenuItem Id="menuItemId2-1-1" Label="TestExample2-1-1" Enabled="false" Checkable="true" Checked="true"/>
+ *     </MenuItem>
+ *     <MenuItem Id="menuItemId2-2" Label="TestExample2-2" Enabled="true" Checkable="true" Checked="true"/>
+ *   </MenuItem>
+ *   <MenuItem Label="---" />
+ *   <MenuItem Id="menuItemId3" Label="TestExample3" Enabled="false" Checkable="true" Checked="false"/>
+ * </Menu>
+ */
+CSInterface.prototype.setContextMenu = function(menu, callback)
+{
+    if ("string" != typeof menu)
+    {
+        return;
+    }
+
+    window.__adobe_cep__.invokeAsync("setContextMenu", menu, callback);
+};
+
+/**
+ * Set context menu by JSON string.
+ *
+ * Since 6.0.0
+ *
+ * There are a number of conventions used to communicate what type of menu item to create and how it should be handled.
+ * - an item without menu ID or menu name is disabled and is not shown.
+ * - if the item label is "---" (three hyphens) then it is treated as a separator. The menu ID in this case will always be NULL.
+ * - Checkable attribute takes precedence over Checked attribute.
+ * - a PNG icon. For optimal display results please supply a 16 x 16px icon as larger dimensions will increase the size of the menu item.
+     The Chrome extension contextMenus API was taken as a reference.
+ * - the items with icons and checkable items cannot coexist on the same menu level. The former take precedences over the latter.
+     https://developer.chrome.com/extensions/contextMenus
+ *
+ * @param menu      A JSON string which describes menu structure.
+ * @param callback  The callback function which is called when a menu item is clicked. The only parameter is the returned ID of clicked menu item.
+ *
+ * @description An example menu JSON:
+ *
+ * {
+ *      "menu": [
+ *          {
+ *              "id": "menuItemId1",
+ *              "label": "testExample1",
+ *              "enabled": true,
+ *              "checkable": true,
+ *              "checked": false,
+ *              "icon": "./image/small_16X16.png"
+ *          },
+ *          {
+ *              "id": "menuItemId2",
+ *              "label": "testExample2",
+ *              "menu": [
+ *                  {
+ *                      "id": "menuItemId2-1",
+ *                      "label": "testExample2-1",
+ *                      "menu": [
+ *                          {
+ *                              "id": "menuItemId2-1-1",
+ *                              "label": "testExample2-1-1",
+ *                              "enabled": false,
+ *                              "checkable": true,
+ *                              "checked": true
+ *                          }
+ *                      ]
+ *                  },
+ *                  {
+ *                      "id": "menuItemId2-2",
+ *                      "label": "testExample2-2",
+ *                      "enabled": true,
+ *                      "checkable": true,
+ *                      "checked": true
+ *                  }
+ *              ]
+ *          },
+ *          {
+ *              "label": "---"
+ *          },
+ *          {
+ *              "id": "menuItemId3",
+ *              "label": "testExample3",
+ *              "enabled": false,
+ *              "checkable": true,
+ *              "checked": false
+ *          }
+ *      ]
+ *  }
+ *
+ */
+CSInterface.prototype.setContextMenuByJSON = function(menu, callback)
+{
+    if ("string" != typeof menu)
+    {
+        return;
+    }
+
+    window.__adobe_cep__.invokeAsync("setContextMenuByJSON", menu, callback);
+};
+
+/**
+ * Updates a context menu item by setting the enabled and selection status.
+ *
+ * Since 5.2.0
+ *
+ * @param menuItemID    The menu item ID.
+ * @param enabled       True to enable the item, false to disable it (gray it out).
+ * @param checked       True to select the item, false to deselect it.
+ */
+CSInterface.prototype.updateContextMenuItem = function(menuItemID, enabled, checked)
+{
+    var itemStatus = new ContextMenuItemStatus(menuItemID, enabled, checked);
+    ret = window.__adobe_cep__.invokeSync("updateContextMenuItem", JSON.stringify(itemStatus));
+};
+
+/**
+ * Get the visibility status of an extension window.
+ *
+ * Since 6.0.0
+ *
+ * @return true if the extension window is visible; false if the extension window is hidden.
+ */
+CSInterface.prototype.isWindowVisible = function()
+{
+    return window.__adobe_cep__.invokeSync("isWindowVisible", "");
+};
+
+/**
+ * Resize extension's content to the specified dimensions.
+ * 1. Works with modal and modeless extensions in all Adobe products.
+ * 2. Extension's manifest min/max size constraints apply and take precedence.
+ * 3. For panel extensions
+ *    3.1 This works in all Adobe products except:
+ *        * Premiere Pro
+ *        * Prelude
+ *        * After Effects
+ *    3.2 When the panel is in certain states (especially when being docked),
+ *        it will not change to the desired dimensions even when the
+ *        specified size satisfies min/max constraints.
+ *
+ * Since 6.0.0
+ *
+ * @param width  The new width
+ * @param height The new height
+ */
+CSInterface.prototype.resizeContent = function(width, height)
+{
+    window.__adobe_cep__.resizeContent(width, height);
+};
+
+/**
+ * Register the invalid certificate callback for an extension.
+ * This callback will be triggered when the extension tries to access the web site that contains the invalid certificate on the main frame.
+ * But if the extension does not call this function and tries to access the web site containing the invalid certificate, a default error page will be shown.
+ *
+ * Since 6.1.0
+ *
+ * @param callback the callback function
+ */
+CSInterface.prototype.registerInvalidCertificateCallback = function(callback)
+{
+    return window.__adobe_cep__.registerInvalidCertificateCallback(callback);
+};
+
+/**
+ * Register an interest in some key events to prevent them from being sent to the host application.
+ *
+ * This function works with modeless extensions and panel extensions.
+ * Generally all the key events will be sent to the host application for these two extensions if the current focused element
+ * is not text input or dropdown,
+ * If you want to intercept some key events and want them to be handled in the extension, please call this function
+ * in advance to prevent them being sent to the host application.
+ *
+ * Since 6.1.0
+ *
+ * @param keyEventsInterest      A JSON string describing those key events you are interested in. A null object or
+                                 an empty string will lead to removing the interest
+ *
+ * This JSON string should be an array, each object has following keys:
+ *
+ * keyCode:  [Required] represents an OS system dependent virtual key code identifying
+ *           the unmodified value of the pressed key.
+ * ctrlKey:  [optional] a Boolean that indicates if the control key was pressed (true) or not (false) when the event occurred.
+ * altKey:   [optional] a Boolean that indicates if the alt key was pressed (true) or not (false) when the event occurred.
+ * shiftKey: [optional] a Boolean that indicates if the shift key was pressed (true) or not (false) when the event occurred.
+ * metaKey:  [optional] (Mac Only) a Boolean that indicates if the Meta key was pressed (true) or not (false) when the event occurred.
+ *                      On Macintosh keyboards, this is the command key. To detect Windows key on Windows, please use keyCode instead.
+ * An example JSON string:
+ *
+ * [
+ *     {
+ *         "keyCode": 48
+ *     },
+ *     {
+ *         "keyCode": 123,
+ *         "ctrlKey": true
+ *     },
+ *     {
+ *         "keyCode": 123,
+ *         "ctrlKey": true,
+ *         "metaKey": true
+ *     }
+ * ]
+ *
+ */
+CSInterface.prototype.registerKeyEventsInterest = function(keyEventsInterest)
+{
+    return window.__adobe_cep__.registerKeyEventsInterest(keyEventsInterest);
+};
+
+/**
+ * Set the title of the extension window.
+ * This function works with modal and modeless extensions in all Adobe products, and panel extensions in Photoshop, InDesign, InCopy, Illustrator, Flash Pro and Dreamweaver.
+ *
+ * Since 6.1.0
+ *
+ * @param title The window title.
+ */
+CSInterface.prototype.setWindowTitle = function(title)
+{
+    window.__adobe_cep__.invokeSync("setWindowTitle", title);
+};
+
+/**
+ * Get the title of the extension window.
+ * This function works with modal and modeless extensions in all Adobe products, and panel extensions in Photoshop, InDesign, InCopy, Illustrator, Flash Pro and Dreamweaver.
+ *
+ * Since 6.1.0
+ *
+ * @return The window title.
+ */
+CSInterface.prototype.getWindowTitle = function()
+{
+    return window.__adobe_cep__.invokeSync("getWindowTitle", "");
+};
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\jsx\execute.jsx 
+======================================== 
+/**
+ * DeepClean — NODE 3: Execution Engine
+ * ExtendScript (ES3-compatible)
+ *
+ * Receives path to manifest_execution.json via argument.
+ * Performs: timeline pruning, limbo organisation, DC_ANCHOR handling.
+ * Wrapped in a single Undo Group.
+ */
+
+// ─── Polyfills ────────────────────────────────────────────────────────────────
+if (!Array.prototype.indexOf) {
+  Array.prototype.indexOf = function (val) {
+    for (var i = 0; i < this.length; i++) { if (this[i] === val) return i; }
+    return -1;
+  };
+}
+if (!Array.prototype.forEach) {
+  Array.prototype.forEach = function (fn) {
+    for (var i = 0; i < this.length; i++) fn(this[i], i, this);
+  };
+}
+if (!Array.prototype.map) {
+  Array.prototype.map = function (fn) {
+    var out = [];
+    for (var i = 0; i < this.length; i++) out.push(fn(this[i], i, this));
+    return out;
+  };
+}
+if (!Array.prototype.filter) {
+  Array.prototype.filter = function (fn) {
+    var out = [];
+    for (var i = 0; i < this.length; i++) { if (fn(this[i], i, this)) out.push(this[i]); }
+    return out;
+  };
+}
+
+// ─── Safe JSON parse ──────────────────────────────────────────────────────────
+function safeParseJSON(str) {
+  if (typeof JSON !== 'undefined' && JSON.parse) {
+    return JSON.parse(str);
+  }
+  return eval('(' + str + ')');
+}
+
+// ─── Read file ────────────────────────────────────────────────────────────────
+function readFile(path) {
+  var f = new File(path);
+  if (!f.exists) throw new Error('File not found: ' + path);
+  f.encoding = 'UTF-8';
+  f.open('r');
+  var content = f.read();
+  f.close();
+  return content;
+}
+
+// ─── Find project item by id ──────────────────────────────────────────────────
+function findItemById(proj, id) {
+  for (var i = 1; i <= proj.items.length; i++) {
+    if (proj.items[i].id === id) return proj.items[i];
+  }
+  return null;
+}
+
+// ─── Find composition by id ───────────────────────────────────────────────────
+function findCompById(proj, id) {
+  for (var i = 1; i <= proj.items.length; i++) {
+    var item = proj.items[i];
+    if (item instanceof CompItem && item.id === id) return item;
+  }
+  return null;
+}
+
+// ─── Find or create folder ────────────────────────────────────────────────────
+function findOrCreateFolder(proj, name, parentFolder) {
+  var parent = parentFolder || proj.rootFolder;
+  // Search existing
+  for (var i = 1; i <= proj.items.length; i++) {
+    var item = proj.items[i];
+    if (item instanceof FolderItem &&
+        item.name === name &&
+        item.parentFolder === parent) {
+      return item;
+    }
+  }
+  // Create new
+  var folder = proj.items.addFolder(name);
+  folder.parentFolder = parent;
+  return folder;
+}
+
+// ─── STEP 1: Clean timelines ──────────────────────────────────────────────────
+function cleanTimelines(proj, manifest, log) {
+  log.push('[STEP 1] Cleaning timelines...');
+
+  var layersToRemove = manifest.layersToRemove || [];
+  if (layersToRemove.length === 0) {
+    log.push('[STEP 1] No layers to remove.');
+    return;
+  }
+
+  // Group by compId
+  var removeMap = {};
+  for (var j = 0; j < layersToRemove.length; j++) {
+    var rem = layersToRemove[j];
+    var cid = String(rem.compId);
+    if (!removeMap[cid]) removeMap[cid] = [];
+    removeMap[cid].push(rem.layerIndex);
+  }
+
+  for (var compIdStr in removeMap) {
+    var comp = findCompById(proj, parseInt(compIdStr, 10));
+    if (!comp) {
+      log.push('[WARN] Comp id ' + compIdStr + ' not found — skipping.');
+      continue;
+    }
+
+    // Sort DESCENDING so removing higher indices first doesn't shift lower ones
+    var indices = removeMap[compIdStr].slice().sort(function (a, b) { return b - a; });
+
+    // Build whitelist set for this comp (indices to KEEP)
+    var whitelist = manifest.whitelist || [];
+    var keepSet = {};
+    for (var wi = 0; wi < whitelist.length; wi++) {
+      if (String(whitelist[wi].compId) === compIdStr) {
+        keepSet[String(whitelist[wi].layerIndex)] = true;
+      }
+    }
+
+    var removed = 0;
+    var skipped = 0;
+    for (var k = 0; k < indices.length; k++) {
+      var idx = indices[k];
+      // Safety: never remove if it appears in the whitelist
+      if (keepSet[String(idx)]) { skipped++; continue; }
+      try {
+        if (idx >= 1 && idx <= comp.numLayers) {
+          comp.layer(idx).remove();
+          removed++;
+        }
+      } catch (e) {
+        log.push('[WARN] Could not remove layer ' + idx + ' from "' + comp.name + '": ' + e.message);
+      }
+    }
+    log.push('[STEP 1] "' + comp.name + '" — removed ' + removed + ' layers' +
+             (skipped > 0 ? ', skipped ' + skipped + ' (whitelisted)' : ''));
+  }
+}
+
+// ─── STEP 2: Move items to limbo ──────────────────────────────────────────────
+function organiseIntoLimbo(proj, manifest, log) {
+  log.push('[STEP 2] Organising items into _LIMBO_DeepClean...');
+
+  var itemsToMove = manifest.itemsToMoveToLimbo || [];
+  if (itemsToMove.length === 0) {
+    log.push('[STEP 2] No items to move.');
+    return;
+  }
+
+  // Root limbo folder
+  var limboRoot = findOrCreateFolder(proj, '_LIMBO_DeepClean', proj.rootFolder);
+
+  // Per-comp sub-folders will be created on demand
+  var compFolderCache = {};
+
+  // ORPHANS sub-folder
+  var orphansFolder = findOrCreateFolder(proj, 'ORPHANS', limboRoot);
+
+  for (var i = 0; i < itemsToMove.length; i++) {
+    var entry = itemsToMove[i];
+    var item = findItemById(proj, entry.id);
+    if (!item) {
+      log.push('[WARN] Item id ' + entry.id + ' not found, skipping.');
+      continue;
+    }
+    if (item instanceof FolderItem && item.name === '_LIMBO_DeepClean') continue;
+
+    // Determine destination folder
+    var destFolder;
+    if (entry.ownerCompId) {
+      var cKey = String(entry.ownerCompId);
+      if (!compFolderCache[cKey]) {
+        compFolderCache[cKey] = findOrCreateFolder(proj, entry.ownerCompName || ('Comp_' + cKey), limboRoot);
+      }
+      destFolder = compFolderCache[cKey];
+    } else {
+      destFolder = orphansFolder;
+    }
+
+    // Prefix name with [DC] if not already
+    if (item.name.indexOf('[DC]') !== 0) {
+      item.name = '[DC] ' + item.name;
+    }
+
+    // Move to destination
+    try {
+      item.parentFolder = destFolder;
+      log.push('[STEP 2] Moved "' + item.name + '" to ' + destFolder.name);
+    } catch (e) {
+      log.push('[WARN] Could not move item "' + item.name + '": ' + e.message);
+    }
+  }
+}
+
+// ─── STEP 3: Handle external comps via DC_ANCHOR ─────────────────────────────
+function handleExternalComps(proj, manifest, log) {
+  log.push('[STEP 3] Handling external comps via DC_ANCHOR...');
+
+  var externalComps = manifest.externalComps || [];
+  if (externalComps.length === 0) {
+    log.push('[STEP 3] No external comps to handle.');
+    return;
+  }
+
+  // Find or create DC_ANCHOR composition
+  var anchorComp = null;
+  for (var i = 1; i <= proj.items.length; i++) {
+    if (proj.items[i] instanceof CompItem && proj.items[i].name === '**DC_ANCHOR**') {
+      anchorComp = proj.items[i];
+      break;
+    }
+  }
+  if (!anchorComp) {
+    // Create minimal anchor comp (1 frame, same settings as first found comp)
+    var refComp = null;
+    for (var j = 1; j <= proj.items.length; j++) {
+      if (proj.items[j] instanceof CompItem) { refComp = proj.items[j]; break; }
+    }
+    var w = refComp ? refComp.width : 1920;
+    var h = refComp ? refComp.height : 1080;
+    var fr = refComp ? refComp.frameRate : 24;
+    anchorComp = proj.items.addComp('**DC_ANCHOR**', w, h, 1, 1 / fr, fr);
+    log.push('[STEP 3] Created **DC_ANCHOR** comp');
+  }
+
+  // Process each external comp
+  for (var e = 0; e < externalComps.length; e++) {
+    var extEntry = externalComps[e];
+    var extComp = findCompById(proj, extEntry.compId);
+    if (!extComp) {
+      log.push('[WARN] External comp id ' + extEntry.compId + ' not found');
+      continue;
+    }
+
+    // Add to DC_ANCHOR as disabled guide layer (check not already there)
+    var alreadyInAnchor = false;
+    for (var li = 1; li <= anchorComp.numLayers; li++) {
+      var lyr = anchorComp.layer(li);
+      if (lyr instanceof AVLayer && lyr.source && lyr.source.id === extComp.id) {
+        alreadyInAnchor = true;
+        break;
+      }
+    }
+    if (!alreadyInAnchor) {
+      try {
+        var newLayer = anchorComp.layers.add(extComp);
+        newLayer.enabled    = false;
+        newLayer.guideLayer = true;
+        newLayer.shy        = true;
+        log.push('[STEP 3] Added "' + extComp.name + '" to DC_ANCHOR');
+      } catch (ex) {
+        log.push('[WARN] Could not add ' + extComp.name + ' to DC_ANCHOR: ' + ex.message);
+      }
+    }
+
+    // Selective pruning: remove unrequired layers from external comp
+    var requiredLayers = extEntry.requiredLayers || [];
+    if (requiredLayers.length > 0) {
+      var requiredMap = {};
+      for (var ri = 0; ri < requiredLayers.length; ri++) {
+        requiredMap[String(requiredLayers[ri])] = true;
+      }
+      // Iterate backwards
+      var pruned = 0;
+      for (var li2 = extComp.numLayers; li2 >= 1; li2--) {
+        if (!requiredMap[String(li2)]) {
+          try {
+            extComp.layer(li2).remove();
+            pruned++;
+          } catch (ex2) {
+            log.push('[WARN] Could not prune layer ' + li2 + ' from ' + extComp.name);
+          }
+        }
+      }
+      log.push('[STEP 3] Pruned ' + pruned + ' unrequired layers from "' + extComp.name + '"');
+    }
+  }
+}
+
+// ─── STEP 4: Log warnings ─────────────────────────────────────────────────────
+function logWarnings(manifest, log) {
+  var warnings = manifest.warnings || [];
+  if (warnings.length > 0) {
+    log.push('[WARNINGS] ' + warnings.length + ' warning(s) from analysis:');
+    for (var i = 0; i < warnings.length; i++) {
+      log.push('  ⚠ ' + warnings[i]);
+    }
+  }
+}
+
+// ─── MAIN ─────────────────────────────────────────────────────────────────────
+function runExecution(manifestPath) {
+  var log = [];
+  try {
+    var proj = app.project;
+    if (!proj) return 'ERROR|No project open';
+
+    // Read manifest
+    var manifestContent = readFile(manifestPath);
+    var manifest = safeParseJSON(manifestContent);
+
+    // Single undo group wraps ALL operations
+    app.beginUndoGroup('DeepClean — Project Cleanup');
+
+    try {
+      cleanTimelines(proj, manifest, log);
+      organiseIntoLimbo(proj, manifest, log);
+      handleExternalComps(proj, manifest, log);
+      logWarnings(manifest, log);
+    } finally {
+      app.endUndoGroup();
+    }
+
+    log.push('[DONE] DeepClean execution complete.');
+    return 'SUCCESS|' + log.join('\n');
+
+  } catch (err) {
+    try { app.endUndoGroup(); } catch (e2) {}
+    return 'ERROR|' + err.message + '\n' + log.join('\n');
+  }
+}
+
+// Entry point: manifestPath passed in via evalScript argument
+runExecution(_arg_manifestPath_);
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\jsx\snapshot.jsx 
+======================================== 
+/**
+ * DeepClean — NODE 1: Snapshot Collector
+ * ExtendScript (ES3-compatible)
+ *
+ * Collects all project items, selected compositions, exports .aep + .aepx,
+ * writes snapshot_project.json to temp, returns "SUCCESS|<path>" string.
+ */
+
+// ─── Polyfills ────────────────────────────────────────────────────────────────
+if (!Array.prototype.indexOf) {
+  Array.prototype.indexOf = function (val) {
+    for (var i = 0; i < this.length; i++) { if (this[i] === val) return i; }
+    return -1;
+  };
+}
+if (!Array.prototype.forEach) {
+  Array.prototype.forEach = function (fn) {
+    for (var i = 0; i < this.length; i++) fn(this[i], i, this);
+  };
+}
+if (!Array.prototype.map) {
+  Array.prototype.map = function (fn) {
+    var out = [];
+    for (var i = 0; i < this.length; i++) out.push(fn(this[i], i, this));
+    return out;
+  };
+}
+if (!Array.prototype.filter) {
+  Array.prototype.filter = function (fn) {
+    var out = [];
+    for (var i = 0; i < this.length; i++) { if (fn(this[i], i, this)) out.push(this[i]); }
+    return out;
+  };
+}
+
+// ─── Safe JSON stringify (ES3 fallback) ───────────────────────────────────────
+function safeStringify(obj) {
+  if (typeof JSON !== 'undefined' && JSON.stringify) {
+    return JSON.stringify(obj, null, 2);
+  }
+  return _stringify(obj);
+}
+function _stringify(val) {
+  var type = typeof val;
+  if (val === null) return 'null';
+  if (type === 'boolean') return val ? 'true' : 'false';
+  if (type === 'number') return isFinite(val) ? String(val) : 'null';
+  if (type === 'string') {
+    return '"' + val.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t') + '"';
+  }
+  if (val instanceof Array) {
+    var arrParts = [];
+    for (var i = 0; i < val.length; i++) arrParts.push(_stringify(val[i]));
+    return '[' + arrParts.join(',') + ']';
+  }
+  if (type === 'object') {
+    var objParts = [];
+    for (var k in val) {
+      if (val.hasOwnProperty(k)) {
+        objParts.push(_stringify(k) + ':' + _stringify(val[k]));
+      }
+    }
+    return '{' + objParts.join(',') + '}';
+  }
+  return 'null';
+}
+
+// ─── Temp directory ───────────────────────────────────────────────────────────
+function getTempDir() {
+  var env = $.getenv('TEMP') || $.getenv('TMP') || $.getenv('TMPDIR');
+  if (!env) {
+    env = ($.os.toLowerCase().indexOf('win') !== -1)
+      ? 'C:\\Temp' : '/tmp';
+  }
+  return env;
+}
+
+// ─── Write file ───────────────────────────────────────────────────────────────
+function writeFile(path, content) {
+  var f = new File(path);
+  f.encoding = 'UTF-8';
+  f.open('w');
+  f.write(content);
+  f.close();
+}
+
+// ─── Stale check: wait until file size stabilises ────────────────────────────
+function waitUntilStable(filePath, maxWaitMs, intervalMs) {
+  maxWaitMs = maxWaitMs || 15000;
+  intervalMs = intervalMs || 400;
+  var f = new File(filePath);
+  var lastSize = -1;
+  var elapsed = 0;
+  while (elapsed < maxWaitMs) {
+    $.sleep(intervalMs);
+    elapsed += intervalMs;
+    f.open('r');
+    var size = f.length;
+    f.close();
+    if (size > 0 && size === lastSize) return true;
+    lastSize = size;
+  }
+  return false;
+}
+
+// ─── Collect item metadata ────────────────────────────────────────────────────
+function getItemType(item) {
+  if (item instanceof CompItem) return 'CompItem';
+  if (item instanceof FootageItem) return 'FootageItem';
+  if (item instanceof FolderItem) return 'FolderItem';
+  return 'Unknown';
+}
+
+function collectItems(proj) {
+  var items = [];
+  for (var i = 1; i <= proj.items.length; i++) {
+    var item = proj.items[i];
+    try {
+      var entry = {
+        id:           item.id,
+        name:         item.name,
+        type:         getItemType(item),
+        parentId:     (item.parentFolder && item.parentFolder !== proj.rootFolder)
+                        ? item.parentFolder.id : null,
+        filePath:     '',
+        hasVideo:     false,
+        hasAudio:     false,
+        duration:     0,
+        width:        0,
+        height:       0,
+        frameRate:    0,
+        numLayers:    0
+      };
+
+      if (item instanceof FootageItem && item.file) {
+        entry.filePath = item.file.fsName;
+      }
+      if (item instanceof CompItem || item instanceof FootageItem) {
+        try { entry.hasVideo = item.hasVideo; } catch (e) {}
+        try { entry.hasAudio = item.hasAudio; } catch (e) {}
+        try { entry.duration = item.duration; } catch (e) {}
+      }
+      if (item instanceof CompItem) {
+        try { entry.width     = item.width; }     catch (e) {}
+        try { entry.height    = item.height; }    catch (e) {}
+        try { entry.frameRate = item.frameRate; } catch (e) {}
+        try { entry.numLayers = item.numLayers; } catch (e) {}
+      }
+      items.push(entry);
+    } catch (e) {
+      // skip inaccessible items
+    }
+  }
+  return items;
+}
+
+// ─── Collect layer data for a CompItem ───────────────────────────────────────
+function collectLayers(comp) {
+  var layers = [];
+  for (var i = 1; i <= comp.numLayers; i++) {
+    var layer = comp.layer(i);
+    var entry = {
+      index:          layer.index,
+      name:           layer.name,
+      enabled:        layer.enabled,
+      solo:           layer.solo,
+      shy:            layer.shy,
+      guideLayer:     layer.guideLayer,
+      isNull:         (layer instanceof AVLayer) ? layer.nullLayer : false,
+      inPoint:        layer.inPoint,
+      outPoint:       layer.outPoint,
+      sourceId:       null,
+      expressions:    [],
+      effectNames:    []
+    };
+
+    // Parent layer index
+    try {
+      if (layer.parent) { entry.parentIndex = layer.parent.index; }
+    } catch (e) {}
+
+    // Source item reference
+    if (layer instanceof AVLayer && layer.source) {
+      try { entry.sourceId = layer.source.id; } catch (e) {}
+    }
+
+    // Collect expressions from all properties recursively
+    try {
+      entry.expressions = collectExpressions(layer);
+    } catch (e) {}
+
+    // Collect effect names
+    try {
+      var effects = layer.property('ADBE Effect Parade');
+      if (effects) {
+        for (var e = 1; e <= effects.numProperties; e++) {
+          try { entry.effectNames.push(effects.property(e).matchName); } catch (ex) {}
+        }
+      }
+    } catch (e) {}
+
+    layers.push(entry);
+  }
+  return layers;
+}
+
+// ─── Recursively collect expressions from a PropertyGroup ────────────────────
+function collectExpressions(prop) {
+  var exprs = [];
+  try {
+    if (prop.numProperties !== undefined) {
+      for (var i = 1; i <= prop.numProperties; i++) {
+        try {
+          var sub = prop.property(i);
+          var subExprs = collectExpressions(sub);
+          for (var j = 0; j < subExprs.length; j++) exprs.push(subExprs[j]);
+        } catch (e) {}
+      }
+    } else {
+      if (prop.expressionEnabled && prop.expression && prop.expression.length > 0) {
+        exprs.push({
+          propPath: prop.name,
+          matchName: prop.matchName || '',
+          expression: prop.expression
+        });
+      }
+    }
+  } catch (e) {}
+  return exprs;
+}
+
+// ─── Collect selected compositions ───────────────────────────────────────────
+function collectSelectedComps(proj) {
+  var selected = [];
+  for (var i = 0; i < proj.selection.length; i++) {
+    var item = proj.selection[i];
+    if (item instanceof CompItem) {
+      var layers = collectLayers(item);
+      selected.push({
+        id:        item.id,
+        name:      item.name,
+        layers:    layers
+      });
+    }
+  }
+  return selected;
+}
+
+// ─── Export .aep and .aepx ────────────────────────────────────────────────────
+function exportProjectFiles(proj, tempDir) {
+  var aepPath  = tempDir + '/DC_snapshot.aep';
+  var aepxPath = tempDir + '/DC_snapshot.aepx';
+
+  // Save a copy as .aep (standard binary format)
+  var aepFile = new File(aepPath);
+  proj.save(aepFile);
+  if (!waitUntilStable(aepPath)) {
+    throw new Error('Timeout waiting for .aep to stabilise');
+  }
+
+  // Attempt XML export as .aepx
+  // AE saves as XML when the file extension is .aepx — supported since CC 2013
+  var aepxSuccess = false;
+  try {
+    var aepxFile = new File(aepxPath);
+    proj.save(aepxFile);
+    if (waitUntilStable(aepxPath, 15000, 400)) {
+      // Verify it looks like XML (not a binary fallback)
+      aepxFile.open('r');
+      var firstChars = aepxFile.read(5);
+      aepxFile.close();
+      if (firstChars.indexOf('<?xml') !== -1 || firstChars.indexOf('<Afte') !== -1) {
+        aepxSuccess = true;
+      } else {
+        aepxPath = ''; // binary fallback — discard
+      }
+    }
+  } catch (e) {
+    // AEPX export not supported or failed — analysis continues without XML
+    aepxPath = '';
+  }
+
+  return { aepPath: aepPath, aepxPath: aepxPath };
+}
+
+// ─── Collect layer data for ALL non-selected CompItems (external comp deep analysis) ──
+function collectExternalCompLayers(proj, selectedComps, allItems) {
+  // Build set of selected comp ids to skip
+  var selectedIdSet = {};
+  for (var s = 0; s < selectedComps.length; s++) {
+    selectedIdSet[selectedComps[s].id] = true;
+  }
+
+  var result = [];
+  var MAX_EXTERNAL_COMPS = 120; // guard against enormous projects
+  var count = 0;
+
+  for (var i = 1; i <= proj.items.length; i++) {
+    var item = proj.items[i];
+    if (!(item instanceof CompItem)) continue;
+    if (selectedIdSet[item.id]) continue;
+    if (count >= MAX_EXTERNAL_COMPS) break;
+    count++;
+
+    try {
+      var layers = collectLayers(item);
+      result.push({ compId: item.id, compName: item.name, layers: layers });
+    } catch (e) {
+      // Skip inaccessible
+    }
+  }
+  return result;
+}
+
+// ─── MAIN ─────────────────────────────────────────────────────────────────────
+function runSnapshot() {
+  try {
+    var proj = app.project;
+    if (!proj) return 'ERROR|No project open';
+
+    var selectedComps = collectSelectedComps(proj);
+    if (selectedComps.length === 0) {
+      return 'ERROR|No compositions selected. Please select one or more compositions in the Project panel.';
+    }
+
+    var tempDir = getTempDir() + '/DeepClean';
+    var tempFolder = new Folder(tempDir);
+    if (!tempFolder.exists) tempFolder.create();
+
+    // Collect all project items
+    var allItems = collectItems(proj);
+
+    // Export project files
+    var exportResult;
+    try {
+      exportResult = exportProjectFiles(proj, tempDir);
+    } catch (e) {
+      exportResult = { aepPath: '', aepxPath: '' };
+    }
+
+    // Build snapshot
+    var snapshot = {
+      version:             '1.0.0',
+      timestamp:           (new Date()).toString(),
+      projectName:         proj.file ? proj.file.name : 'Untitled',
+      projectPath:         proj.file ? proj.file.fsName : '',
+      tempDir:             tempDir,
+      aepPath:             exportResult.aepPath,
+      aepxPath:            exportResult.aepxPath,
+      selectedComps:       selectedComps,
+      allItems:            allItems,
+      externalCompLayers:  collectExternalCompLayers(proj, selectedComps, allItems)
+    };
+
+    var snapshotPath = tempDir + '/snapshot_project.json';
+    writeFile(snapshotPath, safeStringify(snapshot));
+
+    // Verify written
+    var verify = new File(snapshotPath);
+    if (!verify.exists) return 'ERROR|Failed to write snapshot file';
+
+    return 'SUCCESS|' + snapshotPath;
+
+  } catch (err) {
+    return 'ERROR|' + err.message;
+  }
+}
+
+// Entry point called from panel
+runSnapshot();
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\jsx\host.jsx 
+======================================== 
+/**
+ * DeepClean — CEP Host Bridge
+ * Loaded as ScriptPath — exposes entry points callable from panel JS via CSInterface.evalScript
+ */
+
+// ─── Polyfills (shared) ───────────────────────────────────────────────────────
+if (!Array.prototype.indexOf) {
+  Array.prototype.indexOf = function (val) {
+    for (var i = 0; i < this.length; i++) { if (this[i] === val) return i; }
+    return -1;
+  };
+}
+
+function DC_runSnapshot() {
+  // Dynamically load snapshot.jsx
+  var scriptFile = new File($.fileName.replace('host.jsx', 'snapshot.jsx'));
+  if (!scriptFile.exists) return 'ERROR|snapshot.jsx not found at: ' + scriptFile.fsName;
+  $.evalFile(scriptFile);
+  return runSnapshot();
+}
+
+function DC_runExecution(manifestPath) {
+  // Dynamically load execute.jsx with the manifest path substituted
+  var scriptFile = new File($.fileName.replace('host.jsx', 'execute.jsx'));
+  if (!scriptFile.exists) return 'ERROR|execute.jsx not found';
+  var f = scriptFile;
+  f.encoding = 'UTF-8';
+  f.open('r');
+  var src = f.read();
+  f.close();
+  // Replace the placeholder with actual path (quoted)
+  var escaped = manifestPath.replace(/\\/g, '\\\\');
+  src = src.replace(/_arg_manifestPath_/g, '"' + escaped + '"');
+  return eval(src);
+}
+
+function DC_getProjectInfo() {
+  try {
+    var proj = app.project;
+    if (!proj) return 'ERROR|No project open';
+    var info = {
+      name: proj.file ? proj.file.name : 'Untitled',
+      path: proj.file ? proj.file.fsName : '',
+      totalItems: proj.items.length,
+      selectedCount: proj.selection.length,
+      selectedComps: 0
+    };
+    for (var i = 0; i < proj.selection.length; i++) {
+      if (proj.selection[i] instanceof CompItem) info.selectedComps++;
+    }
+    return 'SUCCESS|' + JSON.stringify(info);
+  } catch (e) {
+    return 'ERROR|' + e.message;
+  }
+}
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\node\analyze.js 
+======================================== 
+/**
+ * DeepClean — NODE 2: Analysis Engine
+ * Node.js — Dependency Graph Resolver
+ *
+ * Usage:
+ *   node analyze.js <path_to_snapshot_project.json>
+ *
+ * Outputs: <tempDir>/manifest_execution.json
+ */
+
+'use strict';
+
+const fs      = require('fs-extra');
+const path    = require('path');
+const sax     = require('sax');
+const acorn   = require('acorn');
+
+// ─── CLI ─────────────────────────────────────────────────────────────────────
+const snapshotPath = process.argv[2];
+if (!snapshotPath) {
+  process.stderr.write('ERROR: No snapshot path provided\n');
+  process.exit(1);
+}
+
+// ─── Logging ─────────────────────────────────────────────────────────────────
+function log(msg)  { process.stdout.write('[ANALYZE] ' + msg + '\n'); }
+function warn(msg) { process.stdout.write('[WARN]    ' + msg + '\n'); }
+
+// ─── Hex → UTF-8 (for <bdata> plugin blobs) ──────────────────────────────────
+function hexToUtf8(hex) {
+  try {
+    const buf = Buffer.from(hex.replace(/\s/g, ''), 'hex');
+    return buf.toString('utf8');
+  } catch (e) { return ''; }
+}
+
+// ─── Safe acorn parse ─────────────────────────────────────────────────────────
+function safeAcornParse(src) {
+  try {
+    return acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' });
+  } catch (e) {
+    try {
+      return acorn.parse(src, { ecmaVersion: 2020, sourceType: 'module' });
+    } catch (e2) {
+      return null;
+    }
+  }
+}
+
+// ─── Walk AST and collect string literals / identifiers ─────────────────────
+function walkAst(node, collector, depth) {
+  if (!node || typeof node !== 'object' || depth > 50) return;
+  if (node.type === 'Literal' && typeof node.value === 'string') {
+    collector.push(node.value);
+  }
+  if (node.type === 'Identifier') {
+    collector.push(node.name);
+  }
+  for (const key of Object.keys(node)) {
+    if (key === 'type' || key === 'start' || key === 'end') continue;
+    const child = node[key];
+    if (Array.isArray(child)) {
+      child.forEach(c => walkAst(c, collector, depth + 1));
+    } else if (child && typeof child === 'object') {
+      walkAst(child, collector, depth + 1);
+    }
+  }
+}
+
+// ─── Detect dynamic expressions ──────────────────────────────────────────────
+// Dynamic expressions use eval(), Function(), computed property access, or
+// network/file I/O — we cannot statically resolve these.
+function isDynamic(exprSrc) {
+  const dynamicPatterns = [
+    /\beval\s*\(/,
+    /\bnew\s+Function\s*\(/,
+    /\[.*\]/,                  // computed bracket access
+    /\bthisComp\.layer\s*\([^"']/,  // dynamic layer lookup
+    /\bcomp\s*\([^"']/,             // dynamic comp lookup
+    /\.sourceText\s*\.\s*value/,
+    /\bfootage\s*\([^"']/,
+  ];
+  return dynamicPatterns.some(p => p.test(exprSrc));
+}
+
+// ─── Extract comp/item names from expression via AST ─────────────────────────
+function extractExpressionRefs(exprSrc) {
+  const refs = { strings: [], isDynamic: isDynamic(exprSrc) };
+  const ast = safeAcornParse(exprSrc);
+  if (!ast) {
+    // Fallback: naive string extraction (for legacy ES3 expressions)
+    const strMatches = exprSrc.match(/["'`]([^"'`]{2,64})["'`]/g) || [];
+    strMatches.forEach(m => refs.strings.push(m.replace(/["'`]/g, '')));
+    return refs;
+  }
+  walkAst(ast, refs.strings, 0);
+  return refs;
+}
+
+// ─── Parse .aepx via streaming SAX parser ────────────────────────────────────
+function parseAepx(aepxPath) {
+  return new Promise((resolve, reject) => {
+    if (!aepxPath || !fs.existsSync(aepxPath)) {
+      log('No .aepx found, skipping XML analysis');
+      return resolve({ layerSources: {}, pluginRefs: [], bdataItems: [] });
+    }
+
+    log('Parsing .aepx: ' + aepxPath);
+
+    const result = {
+      layerSources: {},   // { compName: [sourceName, ...] }
+      pluginRefs: [],     // [{ compName, layerName, pluginData }]
+      bdataItems: []      // raw bdata strings for further analysis
+    };
+
+    const parser = sax.createStream(false, { lowercase: true });
+
+    let currentComp  = null;
+    let currentLayer = null;
+    let insideBdata  = false;
+    let bdataBuffer  = '';
+
+    parser.on('opentag', (node) => {
+      const name = node.name;
+      if (name === 'compitem' || name === 'comp') {
+        currentComp = node.attributes.name || node.attributes['ae:name'] || null;
+      }
+      if (name === 'layer' || name === 'avlayer') {
+        currentLayer = node.attributes.name || node.attributes['ae:name'] || null;
+      }
+      if (name === 'bdata') {
+        insideBdata = true;
+        bdataBuffer = '';
+      }
+    });
+
+    parser.on('text', (text) => {
+      if (insideBdata) bdataBuffer += text;
+    });
+
+    parser.on('closetag', (name) => {
+      if (name === 'bdata') {
+        insideBdata = false;
+        if (bdataBuffer.trim().length > 0) {
+          const decoded = hexToUtf8(bdataBuffer.trim());
+          if (decoded.length > 3) {
+            result.bdataItems.push(decoded);
+            if (currentComp && currentLayer) {
+              result.pluginRefs.push({
+                compName:   currentComp,
+                layerName:  currentLayer,
+                pluginData: decoded
+              });
+            }
+          }
+        }
+        bdataBuffer = '';
+      }
+      if (name === 'compitem' || name === 'comp') currentComp  = null;
+      if (name === 'layer'    || name === 'avlayer') currentLayer = null;
+    });
+
+    parser.on('error', (e) => {
+      warn('SAX parser error (non-fatal): ' + e.message);
+      parser._parser.error = null;
+      parser._parser.resume();
+    });
+
+    parser.on('end', () => {
+      log('AEPX parse complete. bdata entries: ' + result.bdataItems.length);
+      resolve(result);
+    });
+
+    try {
+      fs.createReadStream(aepxPath, { encoding: 'utf8' }).pipe(parser);
+    } catch (e) {
+      warn('Could not stream .aepx: ' + e.message);
+      resolve(result);
+    }
+  });
+}
+
+// ─── Build item lookup maps ───────────────────────────────────────────────────
+function buildItemMaps(allItems) {
+  const byId   = {};
+  const byName = {};
+  for (const item of allItems) {
+    byId[item.id]    = item;
+    if (!byName[item.name]) byName[item.name] = [];
+    byName[item.name].push(item);
+  }
+  return { byId, byName };
+}
+
+// ─── Dependency graph node ────────────────────────────────────────────────────
+class DepGraph {
+  constructor() {
+    this.nodes = new Set();   // item ids
+    this.edges = {};          // id → Set<id>
+  }
+  addNode(id) {
+    this.nodes.add(id);
+    if (!this.edges[id]) this.edges[id] = new Set();
+  }
+  addEdge(fromId, toId) {
+    this.addNode(fromId);
+    this.addNode(toId);
+    this.edges[fromId].add(toId);
+  }
+  // Resolve all reachable nodes from seeds (BFS)
+  resolve(seedIds) {
+    const visited = new Set();
+    const queue   = [...seedIds];
+    while (queue.length) {
+      const id = queue.shift();
+      if (visited.has(id)) continue;
+      visited.add(id);
+      const deps = this.edges[id];
+      if (deps) deps.forEach(d => queue.push(d));
+    }
+    return visited;
+  }
+}
+
+// ─── Resolve expression dependencies ─────────────────────────────────────────
+function resolveExpressionDeps(expressions, itemMaps, warnings) {
+  const deps = new Set();
+  for (const exprEntry of expressions) {
+    const src = exprEntry.expression;
+    const refs = extractExpressionRefs(src);
+    if (refs.isDynamic) {
+      warnings.push(
+        'Dynamic expression found in property "' + exprEntry.propPath +
+        '" — treating as UNUSED (aggressive mode). Expression: ' +
+        src.substring(0, 80).replace(/\n/g, ' ') + '...'
+      );
+      continue; // Aggressive mode: skip dynamic
+    }
+    // Resolve string literals against item names
+    for (const str of refs.strings) {
+      if (itemMaps.byName[str]) {
+        itemMaps.byName[str].forEach(item => deps.add(item.id));
+      }
+    }
+  }
+  return deps;
+}
+
+// ─── Resolve bdata plugin refs ────────────────────────────────────────────────
+function resolvePluginDeps(bdataItems, itemMaps) {
+  const deps = new Set();
+  for (const raw of bdataItems) {
+    // Extract anything that looks like a comp/footage name from plugin data
+    // Strategy: scan for sequences that match item names
+    for (const name of Object.keys(itemMaps.byName)) {
+      if (name.length > 2 && raw.includes(name)) {
+        itemMaps.byName[name].forEach(item => deps.add(item.id));
+      }
+    }
+  }
+  return deps;
+}
+
+// ─── Validate file paths ──────────────────────────────────────────────────────
+function validatePaths(allItems, warnings) {
+  for (const item of allItems) {
+    if (item.filePath && item.filePath.length > 0) {
+      if (!fs.existsSync(item.filePath)) {
+        warnings.push('Missing file: "' + item.name + '" at ' + item.filePath);
+      }
+    }
+  }
+}
+
+// ─── Build whitelist entry ────────────────────────────────────────────────────
+function makeWhitelistEntry(comp, layers) {
+  return layers.map(l => ({ compId: comp.id, compName: comp.name, layerIndex: l.index }));
+}
+
+// ─── MAIN ANALYSIS ────────────────────────────────────────────────────────────
+async function main() {
+  log('Reading snapshot: ' + snapshotPath);
+  const snapshot = await fs.readJson(snapshotPath);
+
+  const {
+    tempDir,
+    aepxPath,
+    selectedComps,
+    allItems
+  } = snapshot;
+
+  const warnings     = [];
+  const itemMaps     = buildItemMaps(allItems);
+  const graph        = new DepGraph();
+
+  // Parse AEPX
+  const aepxData = await parseAepx(aepxPath);
+
+  // Validate paths
+  validatePaths(allItems, warnings);
+
+  // ── 1. Seed selected comps into graph ───────────────────────────────────────
+  const selectedIds = new Set(selectedComps.map(c => c.id));
+  selectedIds.forEach(id => graph.addNode(id));
+
+  // ── 2. Process layers in selected comps ─────────────────────────────────────
+  const whitelist      = [];   // { compId, compName, layerIndex }
+  const layersToRemove = [];   // { compId, compName, layerIndex }
+
+  // Track which external comps are needed and which layers within them
+  const externalCompMap = {};  // compId → Set<layerIndex>
+
+  for (const selComp of selectedComps) {
+    log('Analysing comp: ' + selComp.name + ' (' + selComp.layers.length + ' layers)');
+    const compItem = itemMaps.byId[selComp.id];
+
+    for (const layer of selComp.layers) {
+      let keep = false;
+      let reason = '';
+
+      // Layer source → add to graph
+      if (layer.sourceId) {
+        const sourceItem = itemMaps.byId[layer.sourceId];
+        if (sourceItem) {
+          graph.addEdge(selComp.id, layer.sourceId);
+
+          if (sourceItem.type === 'CompItem' && !selectedIds.has(layer.sourceId)) {
+            // External comp dependency
+            if (!externalCompMap[layer.sourceId]) {
+              externalCompMap[layer.sourceId] = new Set();
+            }
+            // This layer is a "seed" in the external comp
+            externalCompMap[layer.sourceId].add(layer.index);
+          }
+          keep = true;
+          reason = 'has source';
+        }
+      }
+
+      // Expression dependencies
+      if (layer.expressions && layer.expressions.length > 0) {
+        const exprDeps = resolveExpressionDeps(layer.expressions, itemMaps, warnings);
+        if (exprDeps.size > 0) {
+          exprDeps.forEach(depId => graph.addEdge(selComp.id, depId));
+          keep = true;
+          reason += ' +expressions';
+        }
+      }
+
+      // Effect names — keep if any effects present
+      if (layer.effectNames && layer.effectNames.length > 0) {
+        keep = true;
+        reason += ' +effects';
+      }
+
+      if (keep) {
+        whitelist.push({ compId: selComp.id, compName: selComp.name, layerIndex: layer.index, reason });
+      } else {
+        layersToRemove.push({ compId: selComp.id, compName: selComp.name, layerIndex: layer.index });
+      }
+    }
+  }
+
+  // ── 3. Add plugin deps from bdata ────────────────────────────────────────────
+  const pluginDeps = resolvePluginDeps(aepxData.bdataItems, itemMaps);
+  pluginDeps.forEach(id => {
+    graph.addNode(id);
+    selectedIds.forEach(sId => graph.addEdge(sId, id));
+  });
+
+  // ── 4. Resolve full dependency graph from seeds ──────────────────────────────
+  const reachableIds = graph.resolve([...selectedIds]);
+  log('Reachable items: ' + reachableIds.size + ' / ' + allItems.length);
+
+  // ── 5. Process external comps: selective pruning ─────────────────────────────
+  const externalCompsManifest = [];
+
+  // Build a lookup: compId (number) → layer data, from snapshot's extCompLayers
+  // (populated from snapshot if deep mode was enabled, otherwise empty)
+  const extCompLayerData = {};
+  if (snapshot.externalCompLayers) {
+    for (const entry of snapshot.externalCompLayers) {
+      extCompLayerData[entry.compId] = entry.layers;
+    }
+  }
+
+  for (const extCompIdStr of Object.keys(externalCompMap)) {
+    const extCompId   = parseInt(extCompIdStr, 10);  // always number
+    const extCompItem = itemMaps.byId[extCompId];
+    if (!extCompItem) {
+      warn('External comp id ' + extCompIdStr + ' not found in item map');
+      continue;
+    }
+
+    // Circular dependency guard: if this comp is also a selected comp, skip nesting
+    if (selectedIds.has(extCompId)) {
+      warnings.push(
+        'Circular dependency: comp "' + extCompItem.name +
+        '" is both selected and referenced as external. Skipping DC_ANCHOR injection.'
+      );
+      continue;
+    }
+
+    const seedLayerSet = externalCompMap[extCompIdStr]; // Set<layerIndex>
+    let   requiredLayers = [...seedLayerSet];
+
+    // If we have deep layer data for this external comp, trace expression deps within it
+    if (extCompLayerData[extCompId]) {
+      const extLayers = extCompLayerData[extCompId];
+      // BFS within external comp: seed → expression refs → sources
+      const reqSet  = new Set(requiredLayers);
+      const queue   = [...requiredLayers];
+      while (queue.length) {
+        const idx = queue.shift();
+        const layer = extLayers.find(l => l.index === idx);
+        if (!layer) continue;
+        // Add source
+        if (layer.sourceId && !reachableIds.has(layer.sourceId)) {
+          reachableIds.add(layer.sourceId);
+        }
+        // Add expression string refs within the same comp
+        if (layer.expressions) {
+          const exprDeps = resolveExpressionDeps(layer.expressions, itemMaps, warnings);
+          exprDeps.forEach(depId => reachableIds.add(depId));
+        }
+        // Include parent chain (layers with parenting)
+        if (layer.parentIndex && !reqSet.has(layer.parentIndex)) {
+          reqSet.add(layer.parentIndex);
+          queue.push(layer.parentIndex);
+        }
+      }
+      requiredLayers = [...reqSet];
+    }
+
+    // Mark external comp itself as reachable
+    reachableIds.add(extCompId);
+
+    externalCompsManifest.push({
+      compId:         extCompId,
+      compName:       extCompItem.name,
+      requiredLayers: requiredLayers
+    });
+
+    log('External comp "' + extCompItem.name + '": keeping layers [' + requiredLayers.join(', ') + ']');
+  }
+
+  // ── 6. Determine items to move to Limbo ──────────────────────────────────────
+  // [KEEP] override: any item whose name starts with "[KEEP]" is force-whitelisted
+  const forceKeepIds = new Set();
+  for (const item of allItems) {
+    if (item.name && item.name.toUpperCase().startsWith('[KEEP]')) {
+      forceKeepIds.add(item.id);
+      log('[KEEP] override applied: "' + item.name + '"');
+    }
+  }
+
+  const itemsToMoveToLimbo = [];
+
+  // Identify "owner comp" for each item (which selected comp first uses it)
+  const ownerMap = {};  // itemId → { compId, compName }
+  for (const entry of whitelist) {
+    const selComp = selectedComps.find(c => c.id === entry.compId);
+    if (!selComp) continue;
+    const layer = selComp.layers.find(l => l.index === entry.layerIndex);
+    if (!layer) continue;
+    // Register source as owned by this comp
+    if (layer.sourceId && !ownerMap[layer.sourceId]) {
+      ownerMap[layer.sourceId] = { compId: entry.compId, compName: entry.compName };
+    }
+  }
+  // Also register items reached via expression deps as owned by the comp that references them
+  for (const selComp of selectedComps) {
+    for (const layer of selComp.layers) {
+      if (!layer.expressions) continue;
+      const exprDeps = resolveExpressionDeps(layer.expressions, itemMaps, []);
+      exprDeps.forEach(depId => {
+        if (!ownerMap[depId]) {
+          ownerMap[depId] = { compId: selComp.id, compName: selComp.name };
+        }
+      });
+    }
+  }
+
+  for (const item of allItems) {
+    if (item.type === 'FolderItem') continue;
+    if (reachableIds.has(item.id)) continue;
+    if (forceKeepIds.has(item.id)) continue; // [KEEP] override
+
+    // Skip the limbo folder itself if it somehow appears
+    if (item.name === '_LIMBO_DeepClean') continue;
+
+    const owner = ownerMap[item.id];
+    itemsToMoveToLimbo.push({
+      id:            item.id,
+      name:          item.name,
+      type:          item.type,
+      ownerCompId:   owner ? owner.compId   : null,
+      ownerCompName: owner ? owner.compName : null
+    });
+  }
+
+  log('Items to move to limbo: ' + itemsToMoveToLimbo.length);
+
+  // ── 7. Estimated size reduction ───────────────────────────────────────────────
+  let estimatedSavedBytes = 0;
+  for (const entry of itemsToMoveToLimbo) {
+    if (entry.filePath) {
+      try {
+        const stat = fs.statSync(entry.filePath);
+        estimatedSavedBytes += stat.size;
+      } catch (e) {}
+    }
+  }
+
+  // ── 8. Write manifest_execution.json ─────────────────────────────────────────
+  const manifest = {
+    version:              '1.0.0',
+    timestamp:            new Date().toISOString(),
+    projectName:          snapshot.projectName,
+    whitelist,
+    layersToRemove,
+    itemsToMoveToLimbo,
+    externalComps:        externalCompsManifest,
+    warnings,
+    stats: {
+      selectedComps:      selectedComps.length,
+      totalItems:         allItems.length,
+      reachableItems:     reachableIds.size,
+      itemsToLimbo:       itemsToMoveToLimbo.length,
+      layersToRemove:     layersToRemove.length,
+      warningCount:       warnings.length,
+      estimatedSavedMB:   (estimatedSavedBytes / (1024 * 1024)).toFixed(2)
+    }
+  };
+
+  const manifestPath = path.join(tempDir, 'manifest_execution.json');
+  await fs.writeJson(manifestPath, manifest, { spaces: 2 });
+
+  log('Manifest written: ' + manifestPath);
+  // Final output consumed by panel
+  process.stdout.write('MANIFEST_READY|' + manifestPath + '\n');
+}
+
+main().catch(err => {
+  process.stderr.write('FATAL: ' + err.message + '\n' + err.stack + '\n');
+  process.exit(1);
+});
+ 
+ 
+======================================== 
+ARQUIVO: G:\My Drive\_extensions\Clean\DeepClean\CSXS\manifest.xml 
+======================================== 
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<ExtensionManifest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ExtensionBundleId="com.deepclean.aep" ExtensionBundleVersion="1.0.0" Version="7.0">
+  <ExtensionList>
+    <Extension Id="com.deepclean.aep.panel" Version="1.0.0"/>
+  </ExtensionList>
+  <ExecutionEnvironment>
+    <HostList>
+      <Host Name="AEFT" Version="[16.0,99.9]"/>
+    </HostList>
+    <LocaleList>
+      <Locale Code="All"/>
+    </LocaleList>
+    <RequiredRuntimeList>
+      <RequiredRuntime Name="CSXS" Version="7.0"/>
+    </RequiredRuntimeList>
+  </ExecutionEnvironment>
+  <DispatchInfoList>
+    <Extension Id="com.deepclean.aep.panel">
+      <DispatchInfo>
+        <Resources>
+          <MainPath>./panel/index.html</MainPath>
+          <ScriptPath>./jsx/host.jsx</ScriptPath>
+          <CEFCommandLine>
+            <Parameter>--allow-file-access-from-files</Parameter>
+            <Parameter>--enable-nodejs</Parameter>
+          </CEFCommandLine>
+        </Resources>
+        <Lifecycle>
+          <AutoVisible>true</AutoVisible>
+        </Lifecycle>
+        <UI>
+          <Type>Panel</Type>
+          <Menu>DeepClean</Menu>
+          <Geometry>
+            <Size>
+              <Height>640</Height>
+              <Width>380</Width>
+            </Size>
+            <MinSize>
+              <Height>480</Height>
+              <Width>320</Width>
+            </MinSize>
+          </Geometry>
+          <Icons>
+            <Icon Type="Normal">./panel/img/icon.png</Icon>
+          </Icons>
+        </UI>
+      </DispatchInfo>
+    </Extension>
+  </DispatchInfoList>
+</ExtensionManifest>
+ 
+ 
